@@ -4,7 +4,7 @@
 
 ![XTSWPR_UI](xtswpr_ui.jpg)
 
-[Download(Windows)](target/release/xtswpr.exe?raw=true)
+[Download (Windows exe)](target/release/xtswpr.exe?raw=true)
 
 ---
 
@@ -25,7 +25,9 @@ This is a robust Minesweeper implementation written in Rust, designed for the Te
 ## Usage
 
 Run the program in the command line terminal.
+
 Both mouse and keyboard controls are supported.
+
 Read HELP for gameplay instructions.
 
 ---
