@@ -39,6 +39,15 @@ struct UiState {
     showing_loss: bool,
     last_run_new_record: bool,
     exit_menu_item_down: bool,  // Track when exit menu item is pressed, wait for release
+    custom_input_mode: Option<u8>,  // 0=width, 1=height, 2=mines; None=not in custom input
+    custom_w_str: String,
+    custom_h_str: String,
+    custom_n_str: String,
+    custom_error_msg: Option<String>,
+    custom_w_rect: Option<Rect>,
+    custom_h_rect: Option<Rect>,
+    custom_n_rect: Option<Rect>,
+    custom_invalid_field: Option<(u8, Instant)>,  // (field_index, flash_start_time) for error flashing
 }
 
 impl UiState {
@@ -63,6 +72,15 @@ impl UiState {
             showing_loss: false,
             last_run_new_record: false,
             exit_menu_item_down: false,
+            custom_input_mode: None,
+            custom_w_str: String::new(),
+            custom_h_str: String::new(),
+            custom_n_str: String::new(),
+            custom_error_msg: None,
+            custom_w_rect: None,
+            custom_h_rect: None,
+            custom_n_rect: None,
+            custom_invalid_field: None,
         }
     }
 
@@ -86,6 +104,7 @@ impl UiState {
         self.showing_win = false;
         self.showing_loss = false;
         self.exit_menu_item_down = false;
+        self.custom_invalid_field = None;
     }
 }
 
@@ -254,38 +273,149 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
             // modals
             ui.modal_close_rect = None;
             if ui.showing_options {
-                let mrect = centered_block(40,8, size);
-                ui.modal_rect = Some(mrect);
-                f.render_widget(Clear, mrect);
-                f.render_widget(Block::default().borders(Borders::ALL).title("Difficulty"), mrect);
-                let inner = Rect::new(mrect.x + 1, mrect.y + 1, mrect.width.saturating_sub(2), mrect.height.saturating_sub(2));
-                let mut lines = vec![Spans::from(Span::raw(""))];
-                for (i, d) in [Difficulty::Beginner, Difficulty::Intermediate, Difficulty::Expert].iter().enumerate() {
-                    let mark = if i==options_selected { "*" } else { " " };
-                    let (ww,hh,mn) = d.params();
-                    let idx = format!(" {} ", i+1);
-                    let suffix = format!(") {:<14} {:>2}x{:<2}  {} mines", d.name(), ww, hh, mn);
-                    let mark_style = if i==options_selected { Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD) } else { Style::default() };
+                // If in custom input mode, show a larger dialog for input
+                if ui.custom_input_mode.is_some() {
+                    let mrect = centered_block(42, 10, size);
+                    ui.modal_rect = Some(mrect);
+                    f.render_widget(Clear, mrect);
+                    f.render_widget(Block::default().borders(Borders::ALL).title("Custom Difficulty"), mrect);
+                    let inner = Rect::new(mrect.x + 1, mrect.y + 1, mrect.width.saturating_sub(2), mrect.height.saturating_sub(2));
+                    
+                    // Calculate max mines based on current W and H input
+                    let w_val = ui.custom_w_str.trim().parse::<usize>().unwrap_or(0);
+                    let h_val = ui.custom_h_str.trim().parse::<usize>().unwrap_or(0);
+                    let max_mines = if w_val > 0 && h_val > 0 { ((w_val * h_val) as f64 * 0.926) as usize } else { 0 };
+                    
+                    let mut lines = vec![Spans::from(Span::raw(""))];
+                    
+                    // Use fixed label width for alignment (20 chars)
+                    let label_width = 20usize;
+                    
+                    // Check if any field is in flash state (invalid input)
+                    let is_flashing = if let Some((_, flash_time)) = ui.custom_invalid_field {
+                        flash_time.elapsed() < Duration::from_millis(600)
+                    } else {
+                        false
+                    };
+                    
+                    // Width row - label and input on same line
+                    let w_style = if ui.custom_input_mode == Some(0) { Style::default().bg(Color::Yellow).fg(Color::Black) } else { Style::default().bg(Color::DarkGray) };
+                    let w_label = format!("{:<width$}", "Width (9-36):", width = label_width);
+                    let w_label_style = if is_flashing && ui.custom_invalid_field == Some((0, ui.custom_invalid_field.unwrap().1)) {
+                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default()
+                    };
+                    lines.push(Spans::from(vec![
+                        Span::raw(" "),
+                        Span::styled(w_label, w_label_style),
+                        Span::styled(format!("{:<3}", ui.custom_w_str), w_style),
+                    ]));
+                    
+                    lines.push(Spans::from(Span::raw("")));
+                    
+                    // Height row - label and input on same line
+                    let h_style = if ui.custom_input_mode == Some(1) { Style::default().bg(Color::Yellow).fg(Color::Black) } else { Style::default().bg(Color::DarkGray) };
+                    let h_label = format!("{:<width$}", "Height (9-24):", width = label_width);
+                    let h_label_style = if is_flashing && ui.custom_invalid_field == Some((1, ui.custom_invalid_field.unwrap().1)) {
+                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default()
+                    };
+                    lines.push(Spans::from(vec![
+                        Span::raw(" "),
+                        Span::styled(h_label, h_label_style),
+                        Span::styled(format!("{:<3}", ui.custom_h_str), h_style),
+                    ]));
+                    
+                    lines.push(Spans::from(Span::raw("")));
+                    
+                    // Mines row - label shows actual max value and input on same line
+                    let n_style = if ui.custom_input_mode == Some(2) { Style::default().bg(Color::Yellow).fg(Color::Black) } else { Style::default().bg(Color::DarkGray) };
+                    let n_label = format!("{:<width$}", format!("Mines (10-{}):", max_mines), width = label_width);
+                    let n_label_style = if is_flashing && ui.custom_invalid_field == Some((2, ui.custom_invalid_field.unwrap().1)) {
+                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default()
+                    };
+                    lines.push(Spans::from(vec![
+                        Span::raw(" "),
+                        Span::styled(n_label, n_label_style),
+                        Span::styled(format!("{:<3}", ui.custom_n_str), n_style),
+                    ]));
+                    
+                    // Error message will be displayed just above OK button
+                    
+                    let p = Paragraph::new(Text::from(lines)).alignment(Alignment::Left);
+                    f.render_widget(p, inner);
+                    
+                    // Calculate input field rectangles for mouse click detection
+                    // Row 1 = Width input, Row 3 = Height input, Row 5 = Mines input
+                    let label_len = 20u16; // Fixed label width for alignment
+                    let indent = 1u16; // One space indentation
+                    ui.custom_w_rect = Some(Rect::new(inner.x + indent + label_len, inner.y + 1, 3, 1));
+                    ui.custom_h_rect = Some(Rect::new(inner.x + indent + label_len, inner.y + 3, 3, 1));
+                    ui.custom_n_rect = Some(Rect::new(inner.x + indent + label_len, inner.y + 5, 3, 1));
+                } else {
+                    ui.custom_w_rect = None;
+                    ui.custom_h_rect = None;
+                    ui.custom_n_rect = None;
+                    // Normal difficulty selection
+                    let mrect = centered_block(42, 10, size);
+                    ui.modal_rect = Some(mrect);
+                    f.render_widget(Clear, mrect);
+                    f.render_widget(Block::default().borders(Borders::ALL).title("Difficulty"), mrect);
+                    let inner = Rect::new(mrect.x + 1, mrect.y + 1, mrect.width.saturating_sub(2), mrect.height.saturating_sub(2));
+                    let mut lines = vec![Spans::from(Span::raw(""))];
+                    
+                    // Pre-defined difficulties
+                    for (i, d) in [Difficulty::Beginner, Difficulty::Intermediate, Difficulty::Expert].iter().enumerate() {
+                        let mark = if i == options_selected { "*" } else { " " };
+                        let (ww, hh, mn) = d.params();
+                        let idx = format!(" {} ", i + 1);
+                        let suffix = format!(") {:<14} {:>2}x{:<2}  {} mines", d.name(), ww, hh, mn);
+                        let mark_style = if i == options_selected { Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD) } else { Style::default() };
+                        let spans = Spans::from(vec![
+                            Span::raw(idx),
+                            Span::styled(mark, mark_style),
+                            Span::raw(suffix),
+                        ]);
+                        lines.push(spans);
+                    }
+                    
+                    // Custom difficulty option
+                    let mark = if options_selected == 3 { "*" } else { " " };
+                    let mark_style = if options_selected == 3 { Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD) } else { Style::default() };
+                    let idx = " 4 ";
+                    let (cw, ch, cn) = (cfg.custom_w, cfg.custom_h, cfg.custom_n);
+                    let suffix = format!(") {:<14} {:>2}x{:<2}  {} mines", "Custom", cw, ch, cn);
                     let spans = Spans::from(vec![
                         Span::raw(idx),
                         Span::styled(mark, mark_style),
                         Span::raw(suffix),
                     ]);
                     lines.push(spans);
+                    
+                    lines.push(Spans::from(Span::raw("")));
+                    let p = Paragraph::new(Text::from(lines)).alignment(Alignment::Left);
+                    f.render_widget(p, inner);
                 }
-                lines.push(Spans::from(Span::raw("")));
-                let p = Paragraph::new(Text::from(lines)).alignment(Alignment::Left);
-                f.render_widget(p, inner);
-                // close button
-                let btn_w = 9u16;
-                let bx = inner.x + (inner.width.saturating_sub(btn_w)) / 2;
-                let by = inner.y + inner.height.saturating_sub(1);
+                
+                // OK/Close button (OK in custom input mode, CLOSE for difficulty selection)
+                let btn_w = if ui.custom_input_mode.is_some() { 5u16 } else { 9u16 };
+                let mrect = ui.modal_rect.unwrap();
+                let bx = mrect.x + (mrect.width.saturating_sub(btn_w)) / 2;
+                let by = mrect.y + mrect.height.saturating_sub(2);  // Position button at last row before bottom border
                 let btn_rect = Rect::new(bx, by, btn_w, 1);
                 ui.modal_close_rect = Some(btn_rect);
+                
                 let mut btn_style = Style::default().bg(Color::Gray).fg(Color::Black).add_modifier(Modifier::BOLD);
+
                 if ui.modal_close_pressed { btn_style = Style::default().bg(Color::Green).fg(Color::Black).add_modifier(Modifier::BOLD); }
                 else if ui.modal_close_hovered { btn_style = Style::default().bg(Color::White).fg(Color::Black).add_modifier(Modifier::BOLD); }
-                let btn = Paragraph::new(Spans::from(Span::styled(" CLOSE ", btn_style))).alignment(Alignment::Center).block(Block::default());
+                
+                let btn_text = if ui.custom_input_mode.is_some() { " OK " } else { " CLOSE " };
+                let btn = Paragraph::new(Spans::from(Span::styled(btn_text, btn_style))).alignment(Alignment::Center).block(Block::default());
                 f.render_widget(btn, btn_rect);
             }
 
@@ -353,9 +483,9 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                 let labels = ["Beginner", "Intermediate", "Expert"];
                 let label_max = labels.iter().map(|s| s.len()).max().unwrap_or(0);
                 let time_w = 5usize; // allow up to 5 digits for time
-                let r0 = cfg.get_record_detail(Difficulty::Beginner);
-                let r1 = cfg.get_record_detail(Difficulty::Intermediate);
-                let r2 = cfg.get_record_detail(Difficulty::Expert);
+                let r0 = cfg.get_record_detail(&Difficulty::Beginner);
+                let r1 = cfg.get_record_detail(&Difficulty::Intermediate);
+                let r2 = cfg.get_record_detail(&Difficulty::Expert);
                 let make_line = |label: &str, rec: Option<(u64,String)>| {
                     let prefix = "  ";
                     let colon = ":";
@@ -410,7 +540,9 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                 // Use the last_run_new_record flag because the config may already
                 // contain the saved value (making t == cfg value). We set this
                 // flag when we write the new record above.
-                let is_new = ui.last_run_new_record;
+                // Don't show "New Record!" for Custom difficulty since it's not stored
+                let is_custom = matches!(cfg.difficulty, Difficulty::Custom(_, _, _));
+                let is_new = ui.last_run_new_record && !is_custom;
                 let time_line = if is_new { format!("Time: {} seconds (New Record!)", t) } else { format!("Time: {} seconds", t) };
                 let lines = vec![Spans::from(Span::raw("")), Spans::from(Span::raw("Mines Cleared — You Win!")), Spans::from(Span::raw(time_line)) ];
                 let p = Paragraph::new(Text::from(lines)).alignment(Alignment::Center);
@@ -464,50 +596,182 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                     match kind {
                         KeyEventKind::Press => {
                             if ui.showing_options {
-                                match code {
-                                    KeyCode::Char('1') => {
-                                        options_selected = 0;
-                                        cfg.difficulty = Difficulty::Beginner;
-                                        save_config(&cfg);
-                                        let (w,h,m) = cfg.difficulty.params();
-                                        game = Game::new(w,h,m);
-                                        reset_ui_after_new_game(&mut game, &mut ui);
-                                        ui.showing_options = false;
-                                        ui.modal_rect = None; ui.modal_close_rect = None; ui.modal_close_pressed = false;
+                                // Handle custom difficulty input mode
+                                if ui.custom_input_mode.is_some() {
+                                    match code {
+                                        KeyCode::Char(c) if c.is_ascii_digit() => {
+                                            match ui.custom_input_mode.unwrap() {
+                                                0 => { // Width input
+                                                    if ui.custom_w_str.len() < 2 {
+                                                        ui.custom_w_str.push(c);
+                                                    }
+                                                    ui.custom_error_msg = None;
+                                                }
+                                                1 => { // Height input
+                                                    if ui.custom_h_str.len() < 2 {
+                                                        ui.custom_h_str.push(c);
+                                                    }
+                                                    ui.custom_error_msg = None;
+                                                }
+                                                2 => { // Mines input
+                                                    if ui.custom_n_str.len() < 3 {
+                                                        ui.custom_n_str.push(c);
+                                                    }
+                                                    ui.custom_error_msg = None;
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                        KeyCode::Backspace => {
+                                            match ui.custom_input_mode.unwrap() {
+                                                0 => { ui.custom_w_str.pop(); }
+                                                1 => { ui.custom_h_str.pop(); }
+                                                2 => { ui.custom_n_str.pop(); }
+                                                _ => {}
+                                            }
+                                            ui.custom_error_msg = None;
+                                        }
+                                        KeyCode::Tab | KeyCode::Down => {
+                                            // Move to next field
+                                            if ui.custom_input_mode.unwrap() < 2 {
+                                                ui.custom_input_mode = Some(ui.custom_input_mode.unwrap() + 1);
+                                            } else {
+                                                ui.custom_input_mode = Some(0);
+                                            }
+                                            ui.custom_error_msg = None;
+                                        }
+                                        KeyCode::BackTab | KeyCode::Up => {
+                                            // Move to previous field
+                                            if ui.custom_input_mode.unwrap() > 0 {
+                                                ui.custom_input_mode = Some(ui.custom_input_mode.unwrap() - 1);
+                                            } else {
+                                                ui.custom_input_mode = Some(2);
+                                            }
+                                            ui.custom_error_msg = None;
+                                        }
+                                        KeyCode::Enter => {
+                                            // Validate and apply custom difficulty
+                                            let w_str = ui.custom_w_str.trim();
+                                            let h_str = ui.custom_h_str.trim();
+                                            let n_str = ui.custom_n_str.trim();
+                                            
+                                            if w_str.is_empty() || h_str.is_empty() || n_str.is_empty() {
+                                                // Flash the first empty field
+                                                if w_str.is_empty() {
+                                                    ui.custom_invalid_field = Some((0, Instant::now()));
+                                                } else if h_str.is_empty() {
+                                                    ui.custom_invalid_field = Some((1, Instant::now()));
+                                                } else {
+                                                    ui.custom_invalid_field = Some((2, Instant::now()));
+                                                }
+                                            } else {
+                                                let w = w_str.parse::<usize>().unwrap_or(0);
+                                                let h = h_str.parse::<usize>().unwrap_or(0);
+                                                let n = n_str.parse::<usize>().unwrap_or(0);
+                                                
+                                                let max_mines = ((w * h) as f64 * 0.926) as usize;
+                                                
+                                                if w < 9 || w > 36 {
+                                                    ui.custom_invalid_field = Some((0, Instant::now()));
+                                                } else if h < 9 || h > 24 {
+                                                    ui.custom_invalid_field = Some((1, Instant::now()));
+                                                } else if n < 10 || n > max_mines {
+                                                    ui.custom_invalid_field = Some((2, Instant::now()));
+                                                } else {
+                                                    // Valid input, apply
+                                                    cfg.custom_w = w;
+                                                    cfg.custom_h = h;
+                                                    cfg.custom_n = n;
+                                                    cfg.difficulty = Difficulty::Custom(w, h, n);
+                                                    save_config(&cfg);
+                                                    game = Game::new(w, h, n);
+                                                    reset_ui_after_new_game(&mut game, &mut ui);
+                                                    ui.showing_options = false;
+                                                    ui.custom_input_mode = None;
+                                                    ui.custom_w_str.clear();
+                                                    ui.custom_h_str.clear();
+                                                    ui.custom_n_str.clear();
+                                                    ui.custom_error_msg = None;
+                                                    ui.modal_rect = None;
+                                                    ui.modal_close_rect = None;
+                                                    ui.modal_close_pressed = false;
+                                                }
+                                            }
+                                        }
+                                        KeyCode::Esc => {
+                                            ui.custom_input_mode = None;
+                                            ui.custom_w_str.clear();
+                                            ui.custom_h_str.clear();
+                                            ui.custom_n_str.clear();
+                                            ui.custom_error_msg = None;
+                                            options_selected = cfg.difficulty.to_index();
+                                        }
+                                        _ => {}
                                     }
-                                    KeyCode::Char('2') => {
-                                        options_selected = 1;
-                                        cfg.difficulty = Difficulty::Intermediate;
-                                        save_config(&cfg);
-                                        let (w,h,m) = cfg.difficulty.params();
-                                        game = Game::new(w,h,m);
-                                        reset_ui_after_new_game(&mut game, &mut ui);
-                                        ui.showing_options = false;
-                                        ui.modal_rect = None; ui.modal_close_rect = None; ui.modal_close_pressed = false;
+                                } else {
+                                    // Normal difficulty selection mode
+                                    match code {
+                                        KeyCode::Char('1') => {
+                                            options_selected = 0;
+                                            cfg.difficulty = Difficulty::Beginner;
+                                            save_config(&cfg);
+                                            let (w,h,m) = cfg.difficulty.params();
+                                            game = Game::new(w,h,m);
+                                            reset_ui_after_new_game(&mut game, &mut ui);
+                                            ui.showing_options = false;
+                                            ui.modal_rect = None; ui.modal_close_rect = None; ui.modal_close_pressed = false;
+                                        }
+                                        KeyCode::Char('2') => {
+                                            options_selected = 1;
+                                            cfg.difficulty = Difficulty::Intermediate;
+                                            save_config(&cfg);
+                                            let (w,h,m) = cfg.difficulty.params();
+                                            game = Game::new(w,h,m);
+                                            reset_ui_after_new_game(&mut game, &mut ui);
+                                            ui.showing_options = false;
+                                            ui.modal_rect = None; ui.modal_close_rect = None; ui.modal_close_pressed = false;
+                                        }
+                                        KeyCode::Char('3') => {
+                                            options_selected = 2;
+                                            cfg.difficulty = Difficulty::Expert;
+                                            save_config(&cfg);
+                                            let (w,h,m) = cfg.difficulty.params();
+                                            game = Game::new(w,h,m);
+                                            reset_ui_after_new_game(&mut game, &mut ui);
+                                            ui.showing_options = false;
+                                            ui.modal_rect = None; ui.modal_close_rect = None; ui.modal_close_pressed = false;
+                                        }
+                                        KeyCode::Char('4') => {
+                                            options_selected = 3;
+                                            ui.custom_input_mode = Some(0);
+                                            ui.custom_w_str = format!("{}", cfg.custom_w);
+                                            ui.custom_h_str = format!("{}", cfg.custom_h);
+                                            ui.custom_n_str = format!("{}", cfg.custom_n);
+                                            ui.custom_error_msg = None;
+                                        }
+                                        KeyCode::Up => { if options_selected == 0 { options_selected = 3 } else { options_selected -= 1 } }
+                                        KeyCode::Down => { options_selected = (options_selected + 1) % 4 }
+                                        KeyCode::Enter | KeyCode::Char(' ') => {
+                                            if options_selected == 3 {
+                                                // Enter custom input mode
+                                                ui.custom_input_mode = Some(0);
+                                                ui.custom_w_str = format!("{}", cfg.custom_w);
+                                                ui.custom_h_str = format!("{}", cfg.custom_h);
+                                                ui.custom_n_str = format!("{}", cfg.custom_n);
+                                                ui.custom_error_msg = None;
+                                            } else {
+                                                cfg.difficulty = Difficulty::from_index(options_selected, cfg.custom_w, cfg.custom_h, cfg.custom_n);
+                                                save_config(&cfg);
+                                                let (w,h,m) = cfg.difficulty.params();
+                                                game = Game::new(w,h,m);
+                                                reset_ui_after_new_game(&mut game, &mut ui);
+                                                ui.showing_options = false;
+                                                ui.modal_rect = None; ui.modal_close_rect = None; ui.modal_close_pressed = false;
+                                            }
+                                        }
+                                        KeyCode::Esc => { ui.showing_options = false; ui.modal_rect = None; ui.modal_close_rect = None; ui.modal_close_pressed = false }
+                                        _ => {}
                                     }
-                                    KeyCode::Char('3') => {
-                                        options_selected = 2;
-                                        cfg.difficulty = Difficulty::Expert;
-                                        save_config(&cfg);
-                                        let (w,h,m) = cfg.difficulty.params();
-                                        game = Game::new(w,h,m);
-                                        reset_ui_after_new_game(&mut game, &mut ui);
-                                        ui.showing_options = false;
-                                        ui.modal_rect = None; ui.modal_close_rect = None; ui.modal_close_pressed = false;
-                                    }
-                                    KeyCode::Up => { if options_selected == 0 { options_selected = 2 } else { options_selected -= 1 } }
-                                    KeyCode::Down => { options_selected = (options_selected + 1) % 3 }
-                                    KeyCode::Enter | KeyCode::Char(' ') => {
-                                        cfg.difficulty = Difficulty::from_index(options_selected);
-                                        save_config(&cfg);
-                                        let (w,h,m) = cfg.difficulty.params();
-                                        game = Game::new(w,h,m);
-                                        reset_ui_after_new_game(&mut game, &mut ui);
-                                        ui.showing_options = false;
-                                        ui.modal_rect = None; ui.modal_close_rect = None; ui.modal_close_pressed = false;
-                                    }
-                                    KeyCode::Esc => { ui.showing_options = false; ui.modal_rect = None; ui.modal_close_rect = None; ui.modal_close_pressed = false }
-                                    _ => {}
                                 }
                             } else if ui.showing_about {
                                 match code { KeyCode::Esc => { ui.showing_about = false; ui.modal_rect = None; ui.modal_close_rect = None; ui.modal_close_pressed = false; ui.hover_index = None } _ => { ui.showing_about = false; ui.modal_rect = None; ui.modal_close_rect = None; ui.modal_close_pressed = false; ui.hover_index = None } }
@@ -658,10 +922,10 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                         ui.modal_close_hovered = false;
                                     }
                                     // if options modal, update hovered option based on mouse row
-                                    if ui.showing_options {
+                                    if ui.showing_options && ui.custom_input_mode.is_none() {
                                         let local_row = me.row as i32 - (mrect.y as i32) - 1; // 0-based within content
-                                        // content layout: 0:blank,1..3:options,4:blank
-                                        if local_row >= 1 && local_row <= 3 {
+                                        // content layout: 0:blank,1..4:options,5:blank
+                                        if local_row >= 1 && local_row <= 4 {
                                             options_selected = (local_row - 1) as usize;
                                         }
                                     }
@@ -680,55 +944,150 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                             continue;
                                         }
                                     }
-                                    // click inside modal: if options, determine which line and apply selection
+                                    // click inside modal: handle custom input mode or options selection
                                     if ui.showing_options {
-                                        let local_row = me.row as i32 - (mrect.y as i32) - 1;
-                                        if local_row >= 1 && local_row <= 3 {
-                                            let idx = (local_row - 1) as usize;
-                                            options_selected = idx;
-                                            // apply selection immediately
-                                            cfg.difficulty = Difficulty::from_index(options_selected);
-                                            save_config(&cfg);
-                                            let (w,h,m) = cfg.difficulty.params();
-                                            game = Game::new(w,h,m);
-                                            reset_ui_after_new_game(&mut game, &mut ui);
-                                            ui.showing_options = false;
-                                            // clear modal geometry so subsequent mouse events are handled by main UI
-                                            ui.modal_rect = None;
-                                            ui.modal_close_rect = None;
-                                            ui.modal_close_pressed = false;
+                                        // Handle custom input mode mouse clicks
+                                        if ui.custom_input_mode.is_some() {
+                                            // Check which input field was clicked
+                                            if let Some(w_rect) = ui.custom_w_rect {
+                                                if me.column >= w_rect.x && me.column <= w_rect.x + w_rect.width.saturating_sub(1) && me.row >= w_rect.y && me.row <= w_rect.y + w_rect.height.saturating_sub(1) {
+                                                    ui.custom_input_mode = Some(0);
+                                                    continue;
+                                                }
+                                            }
+                                            if let Some(h_rect) = ui.custom_h_rect {
+                                                if me.column >= h_rect.x && me.column <= h_rect.x + h_rect.width.saturating_sub(1) && me.row >= h_rect.y && me.row <= h_rect.y + h_rect.height.saturating_sub(1) {
+                                                    ui.custom_input_mode = Some(1);
+                                                    continue;
+                                                }
+                                            }
+                                            if let Some(n_rect) = ui.custom_n_rect {
+                                                if me.column >= n_rect.x && me.column <= n_rect.x + n_rect.width.saturating_sub(1) && me.row >= n_rect.y && me.row <= n_rect.y + n_rect.height.saturating_sub(1) {
+                                                    ui.custom_input_mode = Some(2);
+                                                    continue;
+                                                }
+                                            }
+                                        } else {
+                                            // Normal difficulty selection mode
+                                            let local_row = me.row as i32 - (mrect.y as i32) - 1;
+                                            if local_row >= 1 && local_row <= 4 {
+                                                let idx = (local_row - 1) as usize;
+                                                if idx <= 3 {
+                                                    options_selected = idx;
+                                                    if idx == 3 {
+                                                        // Enter custom input mode
+                                                        ui.custom_input_mode = Some(0);
+                                                        ui.custom_w_str = format!("{}", cfg.custom_w);
+                                                        ui.custom_h_str = format!("{}", cfg.custom_h);
+                                                        ui.custom_n_str = format!("{}", cfg.custom_n);
+                                                        ui.custom_error_msg = None;
+                                                    } else {
+                                                        // apply selection immediately
+                                                        cfg.difficulty = Difficulty::from_index(options_selected, cfg.custom_w, cfg.custom_h, cfg.custom_n);
+                                                        save_config(&cfg);
+                                                        let (w,h,m) = cfg.difficulty.params();
+                                                        game = Game::new(w,h,m);
+                                                        reset_ui_after_new_game(&mut game, &mut ui);
+                                                        ui.showing_options = false;
+                                                        // clear modal geometry so subsequent mouse events are handled by main UI
+                                                        ui.modal_rect = None;
+                                                        ui.modal_close_rect = None;
+                                                        ui.modal_close_pressed = false;
+                                                    }
+                                                }
+                                            }
                                         }
-                                    } else {
-                                        // other modals: clicking inside currently just keeps them open
                                     }
                                 }
                             }
                             MouseEventKind::Up(_) => {
-                                // if we had pressed the close button, check release inside button to close
+                                // if we had pressed the close/OK button, check release inside button
                                 if ui.modal_close_pressed {
                                     if let Some(btn) = ui.modal_close_rect {
                                         let in_btn = me.column >= btn.x && me.column <= btn.x + btn.width.saturating_sub(1) && me.row >= btn.y && me.row <= btn.y + btn.height.saturating_sub(1);
                                             if in_btn {
-                                            let was_win = ui.showing_win;
-                                            let was_loss = ui.showing_loss;
-                                            ui.showing_options = false;
-                                            ui.showing_about = false;
-                                            ui.showing_help = false;
-                                            ui.showing_record = false;
-                                            ui.showing_win = false;
-                                            ui.showing_loss = false;
-                                            // clear modal geometry immediately so following mouse events are not treated as inside modal
-                                            ui.modal_rect = None;
-                                            ui.modal_close_rect = None;
-                                            ui.hover_index = None;
-                                            if was_win || was_loss {
-                                                let (ww,hh,mm) = cfg.difficulty.params();
-                                                game = Game::new(ww, hh, mm);
-                                                reset_ui_after_new_game(&mut game, &mut ui);
+                                            // Handle OK button in custom input mode (same as pressing Enter)
+                                            if ui.custom_input_mode.is_some() {
+                                                let w_str = ui.custom_w_str.trim();
+                                                let h_str = ui.custom_h_str.trim();
+                                                let n_str = ui.custom_n_str.trim();
+                                                
+                                                if w_str.is_empty() || h_str.is_empty() || n_str.is_empty() {
+                                                    // Flash the first empty field
+                                                    if w_str.is_empty() {
+                                                        ui.custom_invalid_field = Some((0, Instant::now()));
+                                                    } else if h_str.is_empty() {
+                                                        ui.custom_invalid_field = Some((1, Instant::now()));
+                                                    } else {
+                                                        ui.custom_invalid_field = Some((2, Instant::now()));
+                                                    }
+                                                } else {
+                                                    let w = w_str.parse::<usize>().unwrap_or(0);
+                                                    let h = h_str.parse::<usize>().unwrap_or(0);
+                                                    let n = n_str.parse::<usize>().unwrap_or(0);
+                                                    
+                                                    let max_mines = ((w * h) as f64 * 0.926) as usize;
+                                                    
+                                                    if w < 9 || w > 36 {
+                                                        ui.custom_invalid_field = Some((0, Instant::now()));
+                                                    } else if h < 9 || h > 24 {
+                                                        ui.custom_invalid_field = Some((1, Instant::now()));
+                                                    } else if n < 10 || n > max_mines {
+                                                        ui.custom_invalid_field = Some((2, Instant::now()));
+                                                    } else {
+                                                        // Valid input, apply
+                                                        cfg.custom_w = w;
+                                                        cfg.custom_h = h;
+                                                        cfg.custom_n = n;
+                                                        cfg.difficulty = Difficulty::Custom(w, h, n);
+                                                        save_config(&cfg);
+                                                        game = Game::new(w, h, n);
+                                                        reset_ui_after_new_game(&mut game, &mut ui);
+                                                        ui.showing_options = false;
+                                                        ui.custom_input_mode = None;
+                                                        ui.custom_w_str.clear();
+                                                        ui.custom_h_str.clear();
+                                                        ui.custom_n_str.clear();
+                                                        ui.custom_error_msg = None;
+                                                        ui.modal_rect = None;
+                                                        ui.modal_close_rect = None;
+                                                        ui.modal_close_pressed = false;
+                                                    }
+                                                }
+                                            } else {
+                                                // CLOSE button in difficulty/other modals
+                                                let was_win = ui.showing_win;
+                                                let was_loss = ui.showing_loss;
+                                                ui.showing_options = false;
+                                                ui.showing_about = false;
+                                                ui.showing_help = false;
+                                                ui.showing_record = false;
+                                                ui.showing_win = false;
+                                                ui.showing_loss = false;
+                                                // clear modal geometry immediately so following mouse events are not treated as inside modal
+                                                ui.modal_rect = None;
+                                                ui.modal_close_rect = None;
+                                                ui.hover_index = None;
+                                                if was_win || was_loss {
+                                                    let (ww,hh,mm) = cfg.difficulty.params();
+                                                    game = Game::new(ww, hh, mm);
+                                                    reset_ui_after_new_game(&mut game, &mut ui);
+                                                }
                                             }
                                         }
                                     }
                                     ui.modal_close_pressed = false;
+                                }
+                            }
+                            MouseEventKind::Down(MouseButton::Right) => {
+                                // Right-click in custom input mode: cancel and return to difficulty selection
+                                if ui.custom_input_mode.is_some() {
+                                    ui.custom_input_mode = None;
+                                    ui.custom_w_str.clear();
+                                    ui.custom_h_str.clear();
+                                    ui.custom_n_str.clear();
+                                    ui.custom_error_msg = None;
+                                    options_selected = cfg.difficulty.to_index();
                                 }
                             }
                             _ => {}
@@ -986,14 +1345,19 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
         }
 
         // If player has won, update record for current difficulty
+        // Don't record times for Custom difficulty since it's not persisted
         if let Some(true) = game.game_over {
             if game.elapsed.is_zero() == false {
                 let secs = game.elapsed.as_secs();
-                let cur = cfg.get_record(cfg.difficulty);
-                if cur.is_none() || secs < cur.unwrap() {
-                    ui.last_run_new_record = true;
-                    cfg.set_record(cfg.difficulty, secs);
-                    save_config(&cfg);
+                let difficulty = cfg.difficulty.clone();
+                let is_custom = matches!(difficulty, Difficulty::Custom(_, _, _));
+                if !is_custom {
+                    let cur = cfg.get_record(&difficulty);
+                    if cur.is_none() || secs < cur.unwrap() {
+                        ui.last_run_new_record = true;
+                        cfg.set_record(&difficulty, secs);
+                        save_config(&cfg);
+                    }
                 }
             }
         }
@@ -1010,6 +1374,9 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
             last_tick = Instant::now();
         }
     }
+
+    // Save current difficulty before exiting
+    save_config(&cfg);
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), DisableMouseCapture, terminal::LeaveAlternateScreen)?;

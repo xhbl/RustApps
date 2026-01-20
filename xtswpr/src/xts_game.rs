@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Deserializer, Serializer};
 use chrono::Local;
 use directories::ProjectDirs;
 use rand::prelude::*;
@@ -7,39 +7,78 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Difficulty { Beginner, Intermediate, Expert }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Difficulty { 
+    Beginner, 
+    Intermediate, 
+    Expert, 
+    Custom(usize, usize, usize) 
+}
+
+impl Serialize for Difficulty {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Difficulty::Beginner => serializer.serialize_str("Beginner"),
+            Difficulty::Intermediate => serializer.serialize_str("Intermediate"),
+            Difficulty::Expert => serializer.serialize_str("Expert"),
+            Difficulty::Custom(_, _, _) => serializer.serialize_str("Custom"),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Difficulty {
+    fn deserialize<D>(deserializer: D) -> Result<Difficulty, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        match s.as_str() {
+            "Beginner" => Ok(Difficulty::Beginner),
+            "Intermediate" => Ok(Difficulty::Intermediate),
+            "Expert" => Ok(Difficulty::Expert),
+            "Custom" => Ok(Difficulty::Custom(0, 0, 0)), // Will be set from custom_w/h/n
+            _ => Err(serde::de::Error::custom("unknown difficulty")),
+        }
+    }
+}
 
 impl Difficulty {
-    pub fn params(self) -> (usize, usize, usize) {
+    pub fn params(&self) -> (usize, usize, usize) {
         match self {
             Difficulty::Beginner => (9, 9, 10),
             Difficulty::Intermediate => (16, 16, 40),
             Difficulty::Expert => (30, 16, 99),
+            Difficulty::Custom(w, h, n) => (*w, *h, *n),
         }
     }
 
-    pub fn name(self) -> &'static str {
+    pub fn name(&self) -> &'static str {
         match self {
             Difficulty::Beginner => "Beginner",
             Difficulty::Intermediate => "Intermediate",
             Difficulty::Expert => "Expert",
+            Difficulty::Custom(_, _, _) => "Custom",
         }
     }
 
-    pub fn to_index(self) -> usize {
+    pub fn to_index(&self) -> usize {
         match self {
             Difficulty::Beginner => 0,
             Difficulty::Intermediate => 1,
             Difficulty::Expert => 2,
+            Difficulty::Custom(_, _, _) => 3,
         }
     }
 
-    pub fn from_index(i: usize) -> Difficulty {
+    pub fn from_index(i: usize, custom_w: usize, custom_h: usize, custom_n: usize) -> Difficulty {
         match i {
             0 => Difficulty::Beginner,
             1 => Difficulty::Intermediate,
-            _ => Difficulty::Expert,
+            2 => Difficulty::Expert,
+            _ => Difficulty::Custom(custom_w, custom_h, custom_n),
         }
     }
 }
@@ -48,35 +87,41 @@ impl Difficulty {
 pub struct Record { pub secs: u64, pub date: String }
 
 #[derive(Serialize, Deserialize)]
+#[serde(default)]
 pub struct Config { 
     pub difficulty: Difficulty,
     pub best_beginner: Option<Record>,
     pub best_intermediate: Option<Record>,
     pub best_expert: Option<Record>,
+    pub custom_w: usize,
+    pub custom_h: usize,
+    pub custom_n: usize,
 }
 
 impl Default for Config {
-    fn default() -> Self { Config { difficulty: Difficulty::Beginner, best_beginner: None, best_intermediate: None, best_expert: None } }
+    fn default() -> Self { Config { difficulty: Difficulty::Beginner, best_beginner: None, best_intermediate: None, best_expert: None, custom_w: 36, custom_h: 20, custom_n: 150 } }
 }
 
 impl Config {
-    pub fn get_record(&self, d: Difficulty) -> Option<u64> {
+    pub fn get_record(&self, d: &Difficulty) -> Option<u64> {
         match d {
             Difficulty::Beginner => self.best_beginner.as_ref().map(|r| r.secs),
             Difficulty::Intermediate => self.best_intermediate.as_ref().map(|r| r.secs),
             Difficulty::Expert => self.best_expert.as_ref().map(|r| r.secs),
+            Difficulty::Custom(_, _, _) => None,
         }
     }
 
-    pub fn get_record_detail(&self, d: Difficulty) -> Option<(u64,String)> {
+    pub fn get_record_detail(&self, d: &Difficulty) -> Option<(u64,String)> {
         match d {
             Difficulty::Beginner => self.best_beginner.as_ref().map(|r| (r.secs, r.date.clone())),
             Difficulty::Intermediate => self.best_intermediate.as_ref().map(|r| (r.secs, r.date.clone())),
             Difficulty::Expert => self.best_expert.as_ref().map(|r| (r.secs, r.date.clone())),
+            Difficulty::Custom(_, _, _) => None,
         }
     }
 
-    pub fn set_record(&mut self, d: Difficulty, secs: u64) {
+    pub fn set_record(&mut self, d: &Difficulty, secs: u64) {
         let date = Local::now().format("%Y/%m/%d").to_string();
         match d {
             Difficulty::Beginner => {
@@ -93,6 +138,9 @@ impl Config {
                 if self.best_expert.as_ref().map_or(true, |v| secs < v.secs) {
                     self.best_expert = Some(Record { secs, date });
                 }
+            }
+            Difficulty::Custom(_, _, _) => {
+                // Do not record time for Custom difficulty
             }
         }
     }
@@ -266,7 +314,13 @@ pub fn load_or_create_config() -> Config {
     if let Some(path) = config_path() {
         if path.exists() {
             if let Ok(s) = fs::read_to_string(&path) {
-                if let Ok(cfg) = toml::from_str::<Config>(&s) { return cfg }
+                if let Ok(mut cfg) = toml::from_str::<Config>(&s) {
+                    // If difficulty is Custom, restore it with the saved custom_w/h/n values
+                    if matches!(cfg.difficulty, Difficulty::Custom(_, _, _)) {
+                        cfg.difficulty = Difficulty::Custom(cfg.custom_w, cfg.custom_h, cfg.custom_n);
+                    }
+                    return cfg;
+                }
             }
         }
         let cfg = Config::default();
