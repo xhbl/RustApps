@@ -127,30 +127,31 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
     let mut exit_requested: bool = false;
 
     // Centralized glyph definitions: change characters/colors here to alter appearance globally
-    let glyph_unopened = ("■", Color::White);
-    let glyph_mine = ("☼", Color::Black);
-    let glyph_flag = ("⚑", Color::Red);
-    let glyph_question = ("?", Color::Red);
+    let not_win = !cfg!(target_os = "windows");
+    let glyph_unopened = (if not_win { "▪" } else { "■" }, Color::Rgb(204, 204, 204));
+    let glyph_mine     = (if not_win { "*" } else { "☼" }, Color::Rgb(5, 5, 5));
+    let glyph_flag     = (if not_win { "F" } else { "⚑" }, Color::Rgb(197, 15, 31));
+    let glyph_question = ("?", Color::Rgb(197, 15, 31));
     // Background color for the minefield (change this variable to alter background)
-    let board_bg = Color::DarkGray;
+    let board_bg = Color::Rgb(118, 118, 118);
     // Cursor background color (centralized)
-    let cursor_bg = Color::LightBlue;
+    let cursor_bg = Color::Rgb(59, 120, 255);
     // Background color for neighbor highlight when chord is active
-    let chord_bg = Color::LightBlue;
+    let chord_bg = Color::Rgb(59, 120, 255);
     // Flash (warning) colors when chord fails
-    let flash_bg = Color::Red;
-    let flash_fg = Color::White;
+    let flash_bg = Color::Rgb(197, 15, 31);
+    let flash_fg = Color::Rgb(255, 255, 255);
     let flash_mod = Modifier::BOLD;
     // Number colors for revealed cells 1..8
     let num_colors: [Color; 8] = [
-        Color::Blue,
-        Color::Blue,
-        Color::Blue,
-        Color::Blue,
-        Color::Blue,
-        Color::Blue,
-        Color::Blue,
-        Color::Blue,
+        Color::Rgb(0, 55, 218),
+        Color::Rgb(0, 55, 218),
+        Color::Rgb(0, 55, 218),
+        Color::Rgb(0, 55, 218),
+        Color::Rgb(0, 55, 218),
+        Color::Rgb(0, 55, 218),
+        Color::Rgb(0, 55, 218),
+        Color::Rgb(0, 55, 218),
     ];
 
     let tick_rate = Duration::from_millis(200);
