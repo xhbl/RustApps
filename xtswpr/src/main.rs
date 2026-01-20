@@ -2,6 +2,7 @@ use std::error::Error;
 
 mod xts_game;
 mod xts_ui;
+mod xts_color;
 
 use xts_game::load_or_create_config;
 use xts_ui::run as run_ui;

@@ -1,6 +1,6 @@
 [package]
 name = "xtswpr"
-version = "1.1.22"
+version = "1.1.24"
 edition = "2024"
 authors = ["XHBL <newxhbl@hotmail.com>"]
 description = "A terminal-based classic Minesweeper game"
@@ -9,6 +9,7 @@ repository = "https://github.com/xhbl/RustApps/xtswpr"
 readme = "README.md"
 
 [dependencies]
+term_color_support = "0.1"
 crossterm = "0.26"
 ratatui = { version = "0.20", default-features = false, features = ["crossterm"] }
 serde = { version = "1.0", features = ["derive"] }
