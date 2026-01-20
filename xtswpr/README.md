@@ -34,7 +34,7 @@ Read HELP for gameplay instructions.
 
 
 ## License
-This project is licensed under [MIT License](../LICENSE). All tools in this repository are free to use, modify, and distribute under the terms of this license.
+This project is licensed under [MIT License](../LICENSE). All code in this repository are free to use, modify, and distribute under the terms of this license.
 
 ---
 
