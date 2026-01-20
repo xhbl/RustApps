@@ -9,7 +9,7 @@ The applications in this project are cross-platform. Windows binaries are availa
 
 | App Name | Description | Latest Version |
 |-----------|-------------|----------------|
-| [xtswpr](xtswpr) | A terminal-based classic Minesweeper game | [v1.1.20](xtswpr/target/release/xtswpr.exe?raw=true) |
+| [xtswpr](xtswpr) | A terminal-based classic Minesweeper game | [v1.1.22](xtswpr/target/release/xtswpr.exe?raw=true) |
 
 ---
 

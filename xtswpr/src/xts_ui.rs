@@ -160,9 +160,11 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
     loop {
         terminal.draw(|f| {
             let size = f.size();
+            let min_twidth = 80u16;
+            let min_theight = 24u16 + game.h.saturating_sub(16) as u16;
             // If terminal too small, render a centered warning and skip normal UI
-            if size.width < 80 || size.height < 24 {
-                let warn_lines = vec![Spans::from(Span::raw("Terminal size too small.")), Spans::from(Span::raw("Minimum required: 80 x 24"))];
+            if size.width < min_twidth || size.height < min_theight {
+                let warn_lines = vec![Spans::from(Span::raw("Terminal size too small.")), Spans::from(Span::raw(format!("Minimum required: {} x {}", min_twidth, min_theight)))];
                 let warn = Paragraph::new(Text::from(warn_lines))
                     .block(Block::default().borders(Borders::ALL).title("Resize Terminal"))
                     .alignment(Alignment::Center);
@@ -178,7 +180,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
             // layout: top menu row, center board, bottom status
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
-                .margin(1)
+                .margin(0)
                 .constraints([Constraint::Length(3), Constraint::Min(6), Constraint::Length(3)].as_ref())
                 .split(size);
 
