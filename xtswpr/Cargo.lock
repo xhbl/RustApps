@@ -1064,7 +1064,7 @@ dependencies = [
 
 [[package]]
 name = "xtswpr"
-version = "1.1.30"
+version = "1.1.32"
 dependencies = [
  "chrono",
  "crossterm",

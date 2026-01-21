@@ -154,6 +154,11 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
     let flash_bg = Color::Red.wtmatch();
     let flash_fg = Color::White.wtmatch();
     let flash_mod = Modifier::BOLD;
+    // Menu / key label colors (centralized)
+    let menu_key_fg = Color::Yellow.wtmatch();
+    let menu_key_bg_hover = Color::LightBlue.wtmatch();
+    let menu_key_bg_pressed = Color::Green.wtmatch();
+    let menu_key_fg_pressed = Color::Black.wtmatch();
     // Number colors for revealed cells 1..8
     let num_colors: [Color; 8] = [
         Color::Blue.wtmatch(),
@@ -212,11 +217,11 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                     _ => (*lbl, ""),
                 };
                 let (key_style, rest_style) = if Some(i) == ui.clicked_index {
-                    (Style::default().bg(Color::Green).fg(Color::Black).add_modifier(Modifier::BOLD), Style::default().bg(Color::Green).fg(Color::Black))
+                    (Style::default().bg(menu_key_bg_pressed).fg(menu_key_fg_pressed).add_modifier(Modifier::BOLD), Style::default().bg(menu_key_bg_pressed).fg(menu_key_fg_pressed))
                 } else if Some(i) == ui.hover_index {
-                    (Style::default().bg(Color::Blue).fg(Color::Black).add_modifier(Modifier::BOLD), Style::default().bg(Color::Blue).fg(Color::Black))
+                    (Style::default().bg(menu_key_bg_hover).fg(menu_key_fg_pressed).add_modifier(Modifier::BOLD), Style::default().bg(menu_key_bg_hover).fg(menu_key_fg_pressed))
                 } else {
-                    (Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD), Style::default())
+                    (Style::default().fg(menu_key_fg).add_modifier(Modifier::BOLD), Style::default())
                 };
 
                 spans_vec.push(Span::styled(label_key.to_string(), key_style));
@@ -242,14 +247,14 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
             let mut status_spans: Vec<Span> = Vec::new();
             status_spans.push(Span::raw(left_text));
             status_spans.push(Span::raw(" ".repeat(mid_spaces)));
-            let mut key_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+            let mut key_style = Style::default().fg(menu_key_fg).add_modifier(Modifier::BOLD);
             let mut rest_style = Style::default();
             if ui.exit_menu_item_down {
-                key_style = Style::default().bg(Color::Green).fg(Color::Black).add_modifier(Modifier::BOLD);
-                rest_style = Style::default().bg(Color::Green).fg(Color::Black);
+                key_style = Style::default().bg(menu_key_bg_pressed).fg(menu_key_fg_pressed).add_modifier(Modifier::BOLD);
+                rest_style = Style::default().bg(menu_key_bg_pressed).fg(menu_key_fg_pressed);
             } else if ui.exit_status_hovered {
-                key_style = Style::default().bg(Color::Blue).fg(Color::Black).add_modifier(Modifier::BOLD);
-                rest_style = Style::default().bg(Color::Blue).fg(Color::Black);
+                key_style = Style::default().bg(menu_key_bg_hover).fg(menu_key_fg_pressed).add_modifier(Modifier::BOLD);
+                rest_style = Style::default().bg(menu_key_bg_hover).fg(menu_key_fg_pressed);
             }
             status_spans.push(Span::styled(right_key.to_string(), key_style));
             status_spans.push(Span::styled(right_rest.to_string(), rest_style));
