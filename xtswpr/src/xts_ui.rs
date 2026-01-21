@@ -24,6 +24,10 @@ struct UiState {
     left_press: Option<(usize,usize)>,
     _right_press: Option<(usize,usize)>,
     chord_active: Option<(usize,usize)>,
+    // simulate key release timer: (start_instant, kind) where kind: 0=space,1=enter
+    key_timer: Option<(Instant,u8)>,
+    // runtime detection whether real key-release events are supported by the terminal
+    supports_key_release: bool,
     flash_cell: Option<((usize,usize), Instant)>,
     clicked_index: Option<usize>,
     click_instant: Option<Instant>,
@@ -82,6 +86,8 @@ impl UiState {
             custom_h_rect: None,
             custom_n_rect: None,
             custom_invalid_field: None,
+            key_timer: None,
+            supports_key_release: cfg!(windows),
         }
     }
 
@@ -106,6 +112,8 @@ impl UiState {
         self.showing_loss = false;
         self.exit_menu_item_down = false;
         self.custom_invalid_field = None;
+        self.key_timer = None;
+        self.supports_key_release = cfg!(windows);
     }
 }
 
@@ -840,6 +848,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                     KeyCode::Char(' ') => {
                                         // Space press: emulate left-button down at current cursor
                                         ui.left_press = Some(game.cursor);
+                                        if !ui.supports_key_release { ui.key_timer = Some((Instant::now(), 0)); }
                                     }
                                     KeyCode::Enter => {
                                         // Enter press: emulate simultaneous left+right down (activate chord highlight)
@@ -847,6 +856,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                         ui.left_press = Some(c);
                                         ui._right_press = Some(c);
                                         ui.chord_active = Some(c);
+                                        if !ui.supports_key_release { ui.key_timer = Some((Instant::now(), 1)); }
                                     }
                                     KeyCode::Char('f') | KeyCode::Char('F') => { game.toggle_flag(game.cursor.0, game.cursor.1) }
                                     _ => {}
@@ -873,6 +883,8 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                             }
                                         }
                                         ui.left_press = None;
+                                        ui.key_timer = None;
+                                        ui.supports_key_release = true;
                                     }
                                     KeyCode::Enter => {
                                         // Enter release: perform chord reveal if chord_active
@@ -905,7 +917,9 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                             }
                                             ui.chord_active = None; ui.left_press = None; ui._right_press = None;
                                         }
-                                    }
+                                        ui.key_timer = None;
+                                        ui.supports_key_release = true;
+                                        }
                                     _ => {}
                                 }
                             }
@@ -1369,6 +1383,63 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                         save_config(&cfg);
                     }
                 }
+            }
+        }
+
+        // handle simulated key release timer (100ms) for terminals that don't emit release events
+        if let Some((t0, kind)) = ui.key_timer {
+            if t0.elapsed() >= Duration::from_millis(100) {
+                match kind {
+                    0 => {
+                        // simulate space release: reveal if press started at same cursor
+                        if let Some((px,py)) = ui.left_press {
+                            let (cx,cy) = game.cursor;
+                            if px==cx && py==cy {
+                                let idx = game.index(cx,cy);
+                                if !game.revealed[idx] {
+                                    game.reveal(cx,cy);
+                                    if let Some(false) = game.game_over { game.reveal_all_mines(); ui.showing_loss = true; }
+                                    else if let Some(true) = game.game_over { ui.showing_win = true; }
+                                }
+                            }
+                        }
+                        ui.left_press = None;
+                    }
+                    1 => {
+                        // simulate enter release: perform chord reveal if chord_active
+                        if let Some((ccx,ccy)) = ui.chord_active {
+                            let idx = game.index(ccx, ccy);
+                            if game.revealed[idx] {
+                                let adj = game.board[idx].adj as usize;
+                                let mut flagged = 0usize;
+                                let mut neighbors = vec![];
+                                for oy in ccy.saturating_sub(1)..=(ccy+1).min(game.h-1) {
+                                    for ox in ccx.saturating_sub(1)..=(ccx+1).min(game.w-1) {
+                                        if ox==ccx && oy==ccy { continue }
+                                        neighbors.push((ox,oy));
+                                    }
+                                }
+                                for (ox,oy) in &neighbors { if game.flagged[game.index(*ox,*oy)] == 1 { flagged += 1 } }
+                                if flagged != adj { ui.flash_cell = Some(((ccx,ccy), Instant::now())); }
+                                else {
+                                    let mut wrong_flag = false;
+                                    for (ox,oy) in &neighbors { let nidx = game.index(*ox,*oy); if game.flagged[nidx] == 1 && !game.board[nidx].mine { wrong_flag = true; break; } }
+                                    if wrong_flag {
+                                        game.reveal_all_mines();
+                                        if let Some(t0) = game.start_time { game.elapsed = t0.elapsed(); }
+                                        game.started = false;
+                                        game.game_over = Some(false);
+                                        ui.showing_loss = true;
+                                    }
+                                    else { for (ox,oy) in &neighbors { let nidx = game.index(*ox,*oy); if !game.revealed[nidx] && game.flagged[nidx] != 1 { game.reveal(*ox,*oy); } } if let Some(true) = game.game_over { ui.showing_win = true } }
+                                }
+                            }
+                        }
+                        ui.chord_active = None; ui.left_press = None; ui._right_press = None;
+                    }
+                    _ => {}
+                }
+                ui.key_timer = None;
             }
         }
 
