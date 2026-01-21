@@ -14,8 +14,9 @@ use std::time::{Duration, Instant};
 use crate::xts_color::WTMatch;
 use crate::xts_game::{Game, Config, Difficulty, save_config};
 
-fn reset_ui_after_new_game(_game: &mut Game, ui: &mut UiState) {
+fn reset_ui_after_new_game(game: &mut Game, ui: &mut UiState) {
     ui.reset_after_new_game();
+    ui.mouse_arrow = Some(game.cursor);
 }
 
 // Group runtime UI variables into a single structure to simplify passing them around
@@ -28,6 +29,8 @@ struct UiState {
     key_timer: Option<(Instant,u8)>,
     // runtime detection whether real key-release events are supported by the terminal
     supports_key_release: bool,
+    // fake arrow indicator position (cell coords) for TUI arrow cursor
+    mouse_arrow: Option<(usize,usize)>,
     flash_cell: Option<((usize,usize), Instant)>,
     clicked_index: Option<usize>,
     click_instant: Option<Instant>,
@@ -90,6 +93,7 @@ impl UiState {
             custom_invalid_field: None,
             key_timer: None,
             supports_key_release: cfg!(windows),
+            mouse_arrow: None,
         }
     }
 
@@ -116,6 +120,7 @@ impl UiState {
         self.custom_invalid_field = None;
         self.key_timer = None;
         self.supports_key_release = cfg!(windows);
+        self.mouse_arrow = None;
     }
 }
 
@@ -131,6 +136,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
     let mut game = Game::new(w,h,mines);
     // grouped runtime UI state
     let mut ui = UiState::new();
+    ui.mouse_arrow = Some(game.cursor);
     let mut menu_rect: Option<Rect> = None;
     let mut board_rect: Option<Rect> = None;
     let mut status_rect: Option<Rect> = None;
@@ -159,6 +165,9 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
     let menu_key_bg_hover = Color::LightBlue.wtmatch();
     let menu_key_bg_pressed = Color::Green.wtmatch();
     let menu_key_fg_pressed = Color::Black.wtmatch();
+    // fake arrow cursor appearance
+    let arrow_char = "▸";
+    let arrow_fg = Color::Yellow.wtmatch();
     // Number colors for revealed cells 1..8
     let num_colors: [Color; 8] = [
         Color::Blue.wtmatch(),
@@ -308,7 +317,14 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                             style = style.bg(flash_bg).fg(flash_fg).add_modifier(flash_mod);
                         }
                     }
-                    spans.push(Span::styled(format!(" {}", s), style));
+                    // render fake arrow cursor if mouse is over this cell
+                    if ui.mouse_arrow == Some((x,y)) {
+                        let arrow_style = style.fg(arrow_fg).add_modifier(Modifier::BOLD);
+                        spans.push(Span::styled(arrow_char.to_string(), arrow_style));
+                        spans.push(Span::styled(format!("{}", s), style));
+                    } else {
+                        spans.push(Span::styled(format!(" {}", s), style));
+                    }
                 }
                 // append a one-character padding column so the right-side visual padding
                 // uses the same background as the board
@@ -631,6 +647,9 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
             }
         })?;
 
+        // bind fake arrow to current logical cursor each frame so it's always synced
+        ui.mouse_arrow = Some(game.cursor);
+
         // If no modal was rendered this frame, ensure close button state is cleared
         if ui.modal_rect.is_none() {
             ui.modal_close_hovered = false;
@@ -871,10 +890,10 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                     KeyCode::F(5) => { if !ui.showing_options { options_selected = cfg.difficulty.to_index(); } ui.showing_options = !ui.showing_options }
                                     KeyCode::F(9) => { ui.showing_about = true }
                                     KeyCode::Char('o') if modifiers.contains(KeyModifiers::CONTROL) => { if !ui.showing_options { options_selected = cfg.difficulty.to_index(); } ui.showing_options = !ui.showing_options }
-                                    KeyCode::Left => { game.step_cursor(-1,0) }
-                                    KeyCode::Right => { game.step_cursor(1,0) }
-                                    KeyCode::Up => { game.step_cursor(0,-1) }
-                                    KeyCode::Down => { game.step_cursor(0,1) }
+                                    KeyCode::Left => { game.step_cursor(-1,0); ui.mouse_arrow = Some(game.cursor); }
+                                    KeyCode::Right => { game.step_cursor(1,0); ui.mouse_arrow = Some(game.cursor); }
+                                    KeyCode::Up => { game.step_cursor(0,-1); ui.mouse_arrow = Some(game.cursor); }
+                                    KeyCode::Down => { game.step_cursor(0,1); ui.mouse_arrow = Some(game.cursor); }
                                     KeyCode::Char(' ') => {
                                         // Space press: emulate left-button down at current cursor
                                         ui.left_press = Some(game.cursor);
@@ -1169,6 +1188,8 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                             offset = end + 1;
                                         }
                                         ui.hover_index = found;
+                                        // when over menu, clear board arrow
+                                        ui.mouse_arrow = None;
                                         true
                                     }
                                     MouseEventKind::Down(MouseButton::Left) => {
@@ -1258,6 +1279,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                             let cy = (me.row - inner.y) as usize;
                                             if cx < game.w && cy < game.h {
                                                 game.cursor = (cx, cy);
+                                                ui.mouse_arrow = Some((cx, cy));
                                             }
                                         }
                                     }
