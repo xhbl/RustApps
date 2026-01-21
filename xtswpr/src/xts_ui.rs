@@ -137,8 +137,8 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
     let board_bg = Color::DarkGray.wtmatch();
     // Cursor background color (centralized)
     let cursor_bg = Color::LightBlue.wtmatch();
-    // Background color for neighbor highlight when chord is active
-    let chord_bg = Color::LightBlue.wtmatch();
+    // Background color for neighbor highlight / reveal press
+    let reveal_bg = Color::DarkGray.wtmatch();
     // Flash (warning) colors when chord fails
     let flash_bg = Color::Red.wtmatch();
     let flash_fg = Color::White.wtmatch();
@@ -246,15 +246,21 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                         else if game.flagged[idx] == 2 { s = glyph_question.0.to_string(); style = style.fg(glyph_question.1); }
                     // highlight neighbors for active chord (both buttons pressed)
                     if let Some((ccx, ccy)) = ui.chord_active {
-                        if !(ccx==x && ccy==y) {
-                            let xmin = ccx.saturating_sub(1);
-                            let xmax = (ccx+1).min(game.w-1);
-                            let ymin = ccy.saturating_sub(1);
-                            let ymax = (ccy+1).min(game.h-1);
-                                    if x >= xmin && x <= xmax && y >= ymin && y <= ymax {
-                                if !game.revealed[idx] && game.flagged[idx] != 1 {
-                                    style = style.bg(chord_bg);
-                                }
+                        let xmin = ccx.saturating_sub(1);
+                        let xmax = (ccx+1).min(game.w-1);
+                        let ymin = ccy.saturating_sub(1);
+                        let ymax = (ccy+1).min(game.h-1);
+                        if x >= xmin && x <= xmax && y >= ymin && y <= ymax {
+                            if !game.revealed[idx] && game.flagged[idx] != 1 {
+                                style = style.bg(reveal_bg).fg(reveal_bg);
+                            }
+                        }
+                    }
+                    // highlight single-cell press (space or mouse down) using same chord color
+                    if let Some((lx,ly)) = ui.left_press {
+                        if x==lx && y==ly {
+                            if !game.revealed[idx] && game.flagged[idx] != 1 {
+                                style = style.bg(reveal_bg).fg(reveal_bg);
                             }
                         }
                     }
