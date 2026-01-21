@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 
 use crate::xts_color::WTMatch;
 use crate::xts_game::{Game, Config, Difficulty, save_config};
+use unicode_width::UnicodeWidthStr;
 
 fn reset_ui_after_new_game(game: &mut Game, ui: &mut UiState) {
     ui.reset_after_new_game();
@@ -248,10 +249,10 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
             let right_key = esc.0;
             let right_rest = esc.1;
             let inner_w = chunks[2].width.saturating_sub(2) as usize;
-            let left_len = left_text.len();
+            let left_w = left_text.as_str().width();
             // account for the ": " we add when rendering the right-hand key/rest
-            let right_len = right_key.len() + 2 + right_rest.len();
-            let mid_spaces = if inner_w > left_len + right_len + 1 { inner_w - left_len - right_len - 1 } else { 1 };
+            let right_w = right_key.width() + 2 + right_rest.width();
+            let mid_spaces = if inner_w > left_w + right_w + 1 { inner_w - left_w - right_w - 1 } else { 1 };
             let mut status_spans: Vec<Span> = Vec::new();
             status_spans.push(Span::raw(left_text));
             status_spans.push(Span::raw(" ".repeat(mid_spaces)));
@@ -432,26 +433,37 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                     let mut lines = vec![Spans::from(Span::raw(""))];
                     
                     // Pre-defined difficulties
-                    for (i, d) in [Difficulty::Beginner, Difficulty::Intermediate, Difficulty::Expert].iter().enumerate() {
-                        let mark = if i == options_selected { "*" } else { " " };
-                        let (ww, hh, mn) = d.params();
-                        let idx = format!(" {} ", i + 1);
-                        let suffix = format!(") {:<14} {:>2}x{:<2}  {} mines", d.name(), ww, hh, mn);
-                        let mark_style = if i == options_selected { Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD) } else { Style::default() };
-                        let spans = Spans::from(vec![
-                            Span::raw(idx),
-                            Span::styled(mark, mark_style),
-                            Span::raw(suffix),
-                        ]);
-                        lines.push(spans);
-                    }
+                                    for (i, d) in [Difficulty::Beginner, Difficulty::Intermediate, Difficulty::Expert].iter().enumerate() {
+                                        let mark = if i == options_selected { "*" } else { " " };
+                                        let (ww, hh, mn) = d.params();
+                                        let idx = format!(" {} ", i + 1);
+                                        // Build name field using display width so wide characters align
+                                        let name = d.name();
+                                        let name_disp_w = name.width();
+                                        let name_col_w = 14usize;
+                                        let name_pad = name_col_w.saturating_sub(name_disp_w);
+                                        let name_field = format!("{}{}", name, " ".repeat(name_pad));
+                                        let suffix = format!(") {} {:>2}x{:<2}  {} mines", name_field, ww, hh, mn);
+                                        let mark_style = if i == options_selected { Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD) } else { Style::default() };
+                                        let spans = Spans::from(vec![
+                                            Span::raw(idx),
+                                            Span::styled(mark, mark_style),
+                                            Span::raw(suffix),
+                                        ]);
+                                        lines.push(spans);
+                                    }
                     
                     // Custom difficulty option
                     let mark = if options_selected == 3 { "*" } else { " " };
                     let mark_style = if options_selected == 3 { Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD) } else { Style::default() };
                     let idx = " 4 ";
                     let (cw, ch, cn) = (cfg.custom_w, cfg.custom_h, cfg.custom_n);
-                    let suffix = format!(") {:<14} {:>2}x{:<2}  {} mines", Difficulty::names()[3], cw, ch, cn);
+                    let name = Difficulty::names()[3];
+                    let name_disp_w = name.width();
+                    let name_col_w = 14usize;
+                    let name_pad = name_col_w.saturating_sub(name_disp_w);
+                    let name_field = format!("{}{}", name, " ".repeat(name_pad));
+                    let suffix = format!(") {} {:>2}x{:<2}  {} mines", name_field, cw, ch, cn);
                     let spans = Spans::from(vec![
                         Span::raw(idx),
                         Span::styled(mark, mark_style),
@@ -544,7 +556,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                 f.render_widget(Clear, rb);
                 let mut rec_lines = vec![Spans::from(Span::raw("")), Spans::from(Span::raw(" Best time in seconds:"))];
                 let labels = &Difficulty::names()[0..3];
-                let label_max = labels.iter().map(|s| s.len()).max().unwrap_or(0);
+                let label_max = labels.iter().map(|s| s.width()).max().unwrap_or(0);
                 let time_w = 5usize; // allow up to 5 digits for time
                 let r0 = cfg.get_record_detail(&Difficulty::Beginner);
                 let r1 = cfg.get_record_detail(&Difficulty::Intermediate);
@@ -554,15 +566,21 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                     let colon = ":";
                     // start with prefix + label + colon
                     let mut s = format!("{}{}{}", prefix, label, colon);
-                    // pad so time column starts 2 spaces after the longest label
-                    let extra_label_pad = label_max.saturating_sub(label.len());
+                    // pad so time column starts 2 spaces after the longest label (use display width)
+                    let extra_label_pad = label_max.saturating_sub(label.width());
                     s.push_str(&" ".repeat(extra_label_pad));
                     s.push_str(&"  "); // two-space gap between longest-name and time
                     // time field
                     match rec {
-                        Some((secs, date)) => {
+                            Some((secs, date)) => {
                             let time_str = format!("{}", secs);
-                            let time_field = if time_str.len() > time_w { time_str.chars().take(time_w).collect::<String>() } else { format!("{:>width$}", time_str, width=time_w) };
+                            let time_w_actual = time_str.as_str().width();
+                            let time_field = if time_w_actual > time_w {
+                                time_str.chars().take(time_w).collect::<String>()
+                            } else {
+                                let pad = time_w.saturating_sub(time_w_actual);
+                                format!("{}{}", " ".repeat(pad), time_str)
+                            };
                             s.push_str(&time_field);
                             s.push_str("  "); // two-space gap between time and date
                             s.push_str(&date);
@@ -1178,8 +1196,8 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                         let mut found: Option<usize> = None;
                                         for (i, (k, r)) in menu_items.iter().take(5).enumerate() {
                                             if i > 0 { offset += 3; }
-                                            // account for the ": " we add when rendering
-                                            let full_len = (k.len() + 2 + r.len()) as u16;
+                                            // account for the ": " we add when rendering (use display width)
+                                            let full_len = (k.width() + 2 + r.width()) as u16;
                                             let end = offset + full_len - 1;
                                             if me.column >= offset && me.column <= end {
                                                 found = Some(i);
@@ -1197,8 +1215,8 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                         let mut offset = start_x;
                                         for (i, (k, r)) in menu_items.iter().take(5).enumerate() {
                                             if i > 0 { offset += 3; }
-                                            // account for the ": " we add when rendering
-                                            let full_len = (k.len() + 2 + r.len()) as u16;
+                                            // account for the ": " we add when rendering (use display width)
+                                            let full_len = (k.width() + 2 + r.width()) as u16;
                                             let end = offset + full_len - 1;
                                             if me.column >= offset && me.column <= end {
                                                 ui.clicked_index = Some(i);
@@ -1240,11 +1258,11 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                     let left_text = format!(" Mines: {}   Time: {}s ", game.remaining_mines(), if game.started { game.start_time.unwrap().elapsed().as_secs() } else { game.elapsed.as_secs() });
                                     let right_label = "Esc: Exit";
                                     let inner_w = srect.width.saturating_sub(2) as usize;
-                                    let left_len = left_text.len();
-                                    let right_len = right_label.len();
-                                    let mid_spaces = if inner_w > left_len + right_len + 1 { inner_w - left_len - right_len - 1 } else { 1 };
-                                    let start_x = srect.x + 1 + left_len as u16 + mid_spaces as u16;
-                                    let end_x = start_x + (right_len as u16).saturating_sub(1);
+                                    let left_w = left_text.as_str().width();
+                                    let right_w = right_label.width();
+                                    let mid_spaces = if inner_w > left_w + right_w + 1 { inner_w - left_w - right_w - 1 } else { 1 };
+                                    let start_x = srect.x + 1 + left_w as u16 + mid_spaces as u16;
+                                    let end_x = start_x + (right_w as u16).saturating_sub(1);
                                     match me.kind {
                                         MouseEventKind::Moved => {
                                             ui.exit_status_hovered = me.column >= start_x && me.column <= end_x;

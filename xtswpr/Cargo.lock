@@ -1064,7 +1064,7 @@ dependencies = [
 
 [[package]]
 name = "xtswpr"
-version = "1.1.36"
+version = "1.1.38"
 dependencies = [
  "chrono",
  "crossterm",
@@ -1074,6 +1074,7 @@ dependencies = [
  "serde",
  "term_color_support",
  "toml",
+ "unicode-width",
 ]
 
 [[package]]
