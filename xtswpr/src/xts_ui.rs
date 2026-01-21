@@ -44,6 +44,7 @@ struct UiState {
     showing_loss: bool,
     last_run_new_record: bool,
     exit_menu_item_down: bool,  // Track when exit menu item is pressed, wait for release
+    exit_status_hovered: bool,
     custom_input_mode: Option<u8>,  // 0=width, 1=height, 2=mines; None=not in custom input
     custom_w_str: String,
     custom_h_str: String,
@@ -77,6 +78,7 @@ impl UiState {
             showing_loss: false,
             last_run_new_record: false,
             exit_menu_item_down: false,
+            exit_status_hovered: false,
             custom_input_mode: None,
             custom_w_str: String::new(),
             custom_h_str: String::new(),
@@ -131,7 +133,8 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
     let mut ui = UiState::new();
     let mut menu_rect: Option<Rect> = None;
     let mut board_rect: Option<Rect> = None;
-    let menu_labels = ["F1: Help","F2: New","F4: Records","F5: Difficulty","F9: About","Esc: Exit"];
+    let mut status_rect: Option<Rect> = None;
+    let menu_labels = ["F1: Help","F2: New","F4: Records","F5: Difficulty","F9: About"];
     let mut options_selected: usize = cfg.difficulty.to_index();
     let mut exit_requested: bool = false;
 
@@ -228,12 +231,34 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
 
             
 
-            // status row
-            let status_text = format!(" Mines: {}   Time: {}s ", game.remaining_mines(), if game.started { game.start_time.unwrap().elapsed().as_secs() } else { game.elapsed.as_secs() });
-            let status = Paragraph::new(Text::from(Spans::from(Span::raw(status_text))))
+            // status row (left info + right-aligned Esc: Exit)
+            let left_text = format!(" Mines: {}   Time: {}s ", game.remaining_mines(), if game.started { game.start_time.unwrap().elapsed().as_secs() } else { game.elapsed.as_secs() });
+            let right_key = "Esc";
+            let right_rest = ": Exit";
+            let inner_w = chunks[2].width.saturating_sub(2) as usize;
+            let left_len = left_text.len();
+            let right_len = right_key.len() + right_rest.len();
+            let mid_spaces = if inner_w > left_len + right_len + 1 { inner_w - left_len - right_len - 1 } else { 1 };
+            let mut status_spans: Vec<Span> = Vec::new();
+            status_spans.push(Span::raw(left_text));
+            status_spans.push(Span::raw(" ".repeat(mid_spaces)));
+            let mut key_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+            let mut rest_style = Style::default();
+            if ui.exit_menu_item_down {
+                key_style = Style::default().bg(Color::Green).fg(Color::Black).add_modifier(Modifier::BOLD);
+                rest_style = Style::default().bg(Color::Green).fg(Color::Black);
+            } else if ui.exit_status_hovered {
+                key_style = Style::default().bg(Color::Blue).fg(Color::Black).add_modifier(Modifier::BOLD);
+                rest_style = Style::default().bg(Color::Blue).fg(Color::Black);
+            }
+            status_spans.push(Span::styled(right_key.to_string(), key_style));
+            status_spans.push(Span::styled(right_rest.to_string(), rest_style));
+            status_spans.push(Span::raw(" "));
+            let status = Paragraph::new(Text::from(Spans::from(status_spans)))
                 .block(Block::default().borders(Borders::ALL))
                 .alignment(Alignment::Left);
             f.render_widget(status, chunks[2]);
+            status_rect = Some(chunks[2]);
 
             // board area
             let board_area = centered_block(((game.w * 2) as u16) + 3, (game.h as u16) + 2, chunks[1]);
@@ -1157,10 +1182,6 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                                     2 => ui.showing_record = true,
                                                     3 => { if !ui.showing_options { options_selected = cfg.difficulty.to_index(); } ui.showing_options = true },
                                                     4 => ui.showing_about = true,
-                                                    5 => {
-                                                        // Mark that exit button is pressed, will exit on Up event
-                                                        ui.exit_menu_item_down = true;
-                                                    },
                                                     _ => {}
                                                 }
                                                 consumed = true;
@@ -1171,11 +1192,6 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                         consumed
                                     }
                                     MouseEventKind::Up(_) => {
-                                        // If exit button was pressed, actually exit now after the Up event
-                                        if ui.exit_menu_item_down {
-                                            ui.exit_menu_item_down = false;
-                                            exit_requested = true;
-                                        }
                                         // Consume all Up events on menu row
                                         true
                                     }
@@ -1189,6 +1205,43 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                         } else { false };
 
                         if !menu_handled {
+                            // handle status bar Esc: Exit mouse interactions (right-aligned label)
+                            if let Some(srect) = status_rect {
+                                let status_row = srect.y + 1;
+                                if me.row == status_row {
+                                    // compute positions matching rendering logic
+                                    let left_text = format!(" Mines: {}   Time: {}s ", game.remaining_mines(), if game.started { game.start_time.unwrap().elapsed().as_secs() } else { game.elapsed.as_secs() });
+                                    let right_label = "Esc: Exit";
+                                    let inner_w = srect.width.saturating_sub(2) as usize;
+                                    let left_len = left_text.len();
+                                    let right_len = right_label.len();
+                                    let mid_spaces = if inner_w > left_len + right_len + 1 { inner_w - left_len - right_len - 1 } else { 1 };
+                                    let start_x = srect.x + 1 + left_len as u16 + mid_spaces as u16;
+                                    let end_x = start_x + (right_len as u16).saturating_sub(1);
+                                    match me.kind {
+                                        MouseEventKind::Moved => {
+                                            ui.exit_status_hovered = me.column >= start_x && me.column <= end_x;
+                                            // do not consume movement here; allow board hover when not over status
+                                        }
+                                        MouseEventKind::Down(MouseButton::Left) => {
+                                            if me.column >= start_x && me.column <= end_x {
+                                                ui.exit_menu_item_down = true;
+                                            }
+                                        }
+                                        MouseEventKind::Up(MouseButton::Left) => {
+                                            if ui.exit_menu_item_down {
+                                                ui.exit_menu_item_down = false;
+                                                if me.column >= start_x && me.column <= end_x {
+                                                    exit_requested = true;
+                                                }
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                } else {
+                                    ui.exit_status_hovered = false;
+                                }
+                            }
                             if let Some(brect) = board_rect {
                                 match me.kind {
                                     MouseEventKind::Moved => {
