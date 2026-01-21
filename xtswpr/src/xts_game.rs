@@ -20,12 +20,7 @@ impl Serialize for Difficulty {
     where
         S: Serializer,
     {
-        match self {
-            Difficulty::Beginner => serializer.serialize_str("Beginner"),
-            Difficulty::Intermediate => serializer.serialize_str("Intermediate"),
-            Difficulty::Expert => serializer.serialize_str("Expert"),
-            Difficulty::Custom(_, _, _) => serializer.serialize_str("Custom"),
-        }
+        serializer.serialize_str(self.name())
     }
 }
 
@@ -36,10 +31,10 @@ impl<'de> Deserialize<'de> for Difficulty {
     {
         let s = String::deserialize(deserializer)?;
         match s.as_str() {
-            "Beginner" => Ok(Difficulty::Beginner),
-            "Intermediate" => Ok(Difficulty::Intermediate),
-            "Expert" => Ok(Difficulty::Expert),
-            "Custom" => Ok(Difficulty::Custom(0, 0, 0)), // Will be set from custom_w/h/n
+            x if x == Difficulty::Beginner.name() => Ok(Difficulty::Beginner),
+            x if x == Difficulty::Intermediate.name() => Ok(Difficulty::Intermediate),
+            x if x == Difficulty::Expert.name() => Ok(Difficulty::Expert),
+            x if x == Difficulty::Custom(0, 0, 0).name() => Ok(Difficulty::Custom(0, 0, 0)), // Will be set from custom_w/h/n
             _ => Err(serde::de::Error::custom("unknown difficulty")),
         }
     }
@@ -80,6 +75,15 @@ impl Difficulty {
             2 => Difficulty::Expert,
             _ => Difficulty::Custom(custom_w, custom_h, custom_n),
         }
+    }
+
+    pub fn names() -> [&'static str; 4] {
+        [
+            Difficulty::Beginner.name(),
+            Difficulty::Intermediate.name(),
+            Difficulty::Expert.name(),
+            Difficulty::Custom(0, 0, 0).name(),
+        ]
     }
 }
 

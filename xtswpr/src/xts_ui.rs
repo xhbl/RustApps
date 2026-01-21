@@ -140,7 +140,15 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
     let mut menu_rect: Option<Rect> = None;
     let mut board_rect: Option<Rect> = None;
     let mut status_rect: Option<Rect> = None;
-    let menu_labels = ["F1: Help","F2: New","F4: Records","F5: Difficulty","F9: About"];
+    // Centralized menu/key items (key, rest). Include Esc here so status can reuse it.
+    let menu_items = [
+        ("F1", "Help"),
+        ("F2", "New"),
+        ("F4", "Records"),
+        ("F5", "Difficulty"),
+        ("F9", "About"),
+        ("Esc", "Exit"),
+    ];
     let mut options_selected: usize = cfg.difficulty.to_index();
     let mut exit_requested: bool = false;
 
@@ -212,19 +220,10 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
 
             // menu row (per-item styled so hover/click mapping aligns with mouse offsets)
             let mut spans_vec: Vec<Span> = Vec::new();
-            for (i, lbl) in menu_labels.iter().enumerate() {
+            for (i, (label_key, label_rest)) in menu_items.iter().take(5).enumerate() {
                 if i > 0 {
                     spans_vec.push(Span::raw("   "));
                 }
-                let (label_key, label_rest) = match *lbl {
-                    "F1: Help" => ("F1", ": Help"),
-                    "F2: New" => ("F2", ": New"),
-                    "F4: Records" => ("F4", ": Records"),
-                    "F5: Difficulty" => ("F5", ": Difficulty"),
-                    "F9: About" => ("F9", ": About"),
-                    "Esc: Exit" => ("Esc", ": Exit"),
-                    _ => (*lbl, ""),
-                };
                 let (key_style, rest_style) = if Some(i) == ui.clicked_index {
                     (Style::default().bg(menu_key_bg_pressed).fg(menu_key_fg_pressed).add_modifier(Modifier::BOLD), Style::default().bg(menu_key_bg_pressed).fg(menu_key_fg_pressed))
                 } else if Some(i) == ui.hover_index {
@@ -234,7 +233,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                 };
 
                 spans_vec.push(Span::styled(label_key.to_string(), key_style));
-                spans_vec.push(Span::styled(label_rest.to_string(), rest_style));
+                spans_vec.push(Span::styled(format!(": {}", label_rest), rest_style));
             }
             // add one-space padding left and right inside the menu block
             spans_vec.insert(0, Span::raw(" "));
@@ -243,15 +242,15 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
             f.render_widget(menu, chunks[0]);
             menu_rect = Some(chunks[0]);
 
-            
-
             // status row (left info + right-aligned Esc: Exit)
             let left_text = format!(" Mines: {}   Time: {}s ", game.remaining_mines(), if game.started { game.start_time.unwrap().elapsed().as_secs() } else { game.elapsed.as_secs() });
-            let right_key = "Esc";
-            let right_rest = ": Exit";
+            let esc = menu_items.iter().find(|(k, _)| *k == "Esc").unwrap_or(&("Esc", "Exit"));
+            let right_key = esc.0;
+            let right_rest = esc.1;
             let inner_w = chunks[2].width.saturating_sub(2) as usize;
             let left_len = left_text.len();
-            let right_len = right_key.len() + right_rest.len();
+            // account for the ": " we add when rendering the right-hand key/rest
+            let right_len = right_key.len() + 2 + right_rest.len();
             let mid_spaces = if inner_w > left_len + right_len + 1 { inner_w - left_len - right_len - 1 } else { 1 };
             let mut status_spans: Vec<Span> = Vec::new();
             status_spans.push(Span::raw(left_text));
@@ -266,7 +265,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                 rest_style = Style::default().bg(menu_key_bg_hover).fg(menu_key_fg_pressed);
             }
             status_spans.push(Span::styled(right_key.to_string(), key_style));
-            status_spans.push(Span::styled(right_rest.to_string(), rest_style));
+            status_spans.push(Span::styled(format!(": {}", right_rest), rest_style));
             status_spans.push(Span::raw(" "));
             let status = Paragraph::new(Text::from(Spans::from(status_spans)))
                 .block(Block::default().borders(Borders::ALL))
@@ -342,7 +341,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                     let mrect = centered_block(42, 10, size);
                     ui.modal_rect = Some(mrect);
                     f.render_widget(Clear, mrect);
-                    f.render_widget(Block::default().borders(Borders::ALL).title("Custom Difficulty"), mrect);
+                    f.render_widget(Block::default().borders(Borders::ALL).title(format!("{} Difficulty", Difficulty::Custom(0,0,0).name())), mrect);
                     let inner = Rect::new(mrect.x + 1, mrect.y + 1, mrect.width.saturating_sub(2), mrect.height.saturating_sub(2));
                     
                     // Calculate max mines based on current W and H input
@@ -428,7 +427,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                     let mrect = centered_block(42, 10, size);
                     ui.modal_rect = Some(mrect);
                     f.render_widget(Clear, mrect);
-                    f.render_widget(Block::default().borders(Borders::ALL).title("Difficulty"), mrect);
+                    f.render_widget(Block::default().borders(Borders::ALL).title(menu_items[3].1), mrect);
                     let inner = Rect::new(mrect.x + 1, mrect.y + 1, mrect.width.saturating_sub(2), mrect.height.saturating_sub(2));
                     let mut lines = vec![Spans::from(Span::raw(""))];
                     
@@ -452,7 +451,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                     let mark_style = if options_selected == 3 { Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD) } else { Style::default() };
                     let idx = " 4 ";
                     let (cw, ch, cn) = (cfg.custom_w, cfg.custom_h, cfg.custom_n);
-                    let suffix = format!(") {:<14} {:>2}x{:<2}  {} mines", "Custom", cw, ch, cn);
+                    let suffix = format!(") {:<14} {:>2}x{:<2}  {} mines", Difficulty::names()[3], cw, ch, cn);
                     let spans = Spans::from(vec![
                         Span::raw(idx),
                         Span::styled(mark, mark_style),
@@ -487,7 +486,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                 let mrect = centered_block(48,8, size);
                 ui.modal_rect = Some(mrect);
                 f.render_widget(Clear, mrect);
-                f.render_widget(Block::default().borders(Borders::ALL).title("About"), mrect);
+                f.render_widget(Block::default().borders(Borders::ALL).title(menu_items[4].1), mrect);
                 let inner = Rect::new(mrect.x + 1, mrect.y + 1, mrect.width.saturating_sub(2), mrect.height.saturating_sub(2));
                 let lines = vec![
                     Spans::from(Span::raw("")),
@@ -514,7 +513,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                 let mrect = centered_block(50,10, size);
                 ui.modal_rect = Some(mrect);
                 f.render_widget(Clear, mrect);
-                f.render_widget(Block::default().borders(Borders::ALL).title("Help"), mrect);
+                f.render_widget(Block::default().borders(Borders::ALL).title(menu_items[0].1), mrect);
                 let inner = Rect::new(mrect.x + 1, mrect.y + 1, mrect.width.saturating_sub(2), mrect.height.saturating_sub(2));
                 let help_lines = vec![
                     Spans::from(Span::raw("")),
@@ -544,7 +543,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                 ui.modal_rect = Some(rb);
                 f.render_widget(Clear, rb);
                 let mut rec_lines = vec![Spans::from(Span::raw("")), Spans::from(Span::raw(" Best time in seconds:"))];
-                let labels = ["Beginner", "Intermediate", "Expert"];
+                let labels = &Difficulty::names()[0..3];
                 let label_max = labels.iter().map(|s| s.len()).max().unwrap_or(0);
                 let time_w = 5usize; // allow up to 5 digits for time
                 let r0 = cfg.get_record_detail(&Difficulty::Beginner);
@@ -576,10 +575,10 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                         }
                     }
                 };
-                rec_lines.push(make_line("Beginner", r0));
-                rec_lines.push(make_line("Intermediate", r1));
-                rec_lines.push(make_line("Expert", r2));
-                let p = Paragraph::new(Text::from(rec_lines)).block(Block::default().borders(Borders::ALL).title("Records")).alignment(Alignment::Left);
+                rec_lines.push(make_line(labels[0], r0));
+                rec_lines.push(make_line(labels[1], r1));
+                rec_lines.push(make_line(labels[2], r2));
+                let p = Paragraph::new(Text::from(rec_lines)).block(Block::default().borders(Borders::ALL).title(menu_items[2].1)).alignment(Alignment::Left);
                 f.render_widget(p, rb);
                 // close button
                 let btn_w = 9u16;
@@ -1177,9 +1176,10 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                     MouseEventKind::Moved => {
                                         let mut offset = start_x;
                                         let mut found: Option<usize> = None;
-                                        for (i, lbl) in menu_labels.iter().enumerate() {
+                                        for (i, (k, r)) in menu_items.iter().take(5).enumerate() {
                                             if i > 0 { offset += 3; }
-                                            let full_len = (*lbl).len() as u16;
+                                            // account for the ": " we add when rendering
+                                            let full_len = (k.len() + 2 + r.len()) as u16;
                                             let end = offset + full_len - 1;
                                             if me.column >= offset && me.column <= end {
                                                 found = Some(i);
@@ -1195,9 +1195,10 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                     MouseEventKind::Down(MouseButton::Left) => {
                                         let mut consumed = false;
                                         let mut offset = start_x;
-                                        for (i, lbl) in menu_labels.iter().enumerate() {
+                                        for (i, (k, r)) in menu_items.iter().take(5).enumerate() {
                                             if i > 0 { offset += 3; }
-                                            let full_len = (*lbl).len() as u16;
+                                            // account for the ": " we add when rendering
+                                            let full_len = (k.len() + 2 + r.len()) as u16;
                                             let end = offset + full_len - 1;
                                             if me.column >= offset && me.column <= end {
                                                 ui.clicked_index = Some(i);
