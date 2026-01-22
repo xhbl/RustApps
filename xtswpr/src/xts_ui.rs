@@ -45,8 +45,10 @@ struct UiState {
     showing_options: bool,
     options_use_q: bool,
     options_ascii: bool,
+    options_indicator: bool,
     options_use_q_rect: Option<Rect>,
     options_ascii_rect: Option<Rect>,
+    options_indicator_rect: Option<Rect>,
     options_focus: Option<u8>,
     showing_help: bool,
     showing_record: bool,
@@ -85,8 +87,10 @@ impl UiState {
             showing_options: false,
             options_use_q: false,
             options_ascii: false,
+            options_indicator: false,
             options_use_q_rect: None,
             options_ascii_rect: None,
+            options_indicator_rect: None,
             options_focus: None,
             showing_help: false,
             showing_record: false,
@@ -128,8 +132,10 @@ impl UiState {
         self.showing_options = false;
         self.options_use_q = false;
         self.options_ascii = false;
+        self.options_indicator = false;
         self.options_use_q_rect = None;
         self.options_ascii_rect = None;
+        self.options_indicator_rect = None;
         self.options_focus = None;
         self.showing_help = false;
         self.showing_record = false;
@@ -337,8 +343,8 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                             style = style.bg(flash_bg).fg(flash_fg).add_modifier(flash_mod);
                         }
                     }
-                    // render cursor indicator if mouse is over this cell
-                    if ui.cursor_indicator == Some((x,y)) {
+                    // render cursor indicator if enabled and mouse is over this cell
+                    if cfg.show_indicator && ui.cursor_indicator == Some((x,y)) {
                         let indicator_style = style.fg(indicator_fg).add_modifier(Modifier::BOLD);
                         spans.push(Span::styled(indicator_char.to_string(), indicator_style));
                         spans.push(Span::styled(format!("{}", s), style));
@@ -514,30 +520,36 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                 f.render_widget(btn, btn_rect);
             }
             if ui.showing_options {
-                let mrect = centered_block(40,7, size);
+                let mrect = centered_block(30,8, size);
                 ui.modal_rect = Some(mrect);
                 f.render_widget(Clear, mrect);
                 f.render_widget(Block::default().borders(Borders::ALL).title(menu_items[4].1), mrect);
                 let inner = Rect::new(mrect.x + 1, mrect.y + 1, mrect.width.saturating_sub(2), mrect.height.saturating_sub(2));
                 let mut lines = vec![];
+                let cb0 = if ui.options_indicator { "[x]" } else { "[ ]" };
                 let cb1 = if ui.options_use_q { "[x]" } else { "[ ]" };
                 let cb2 = if ui.options_ascii { "[x]" } else { "[ ]" };
                 let focus0 = ui.options_focus == Some(0);
                 let focus1 = ui.options_focus == Some(1);
+                let focus2 = ui.options_focus == Some(2);
                 let focus_style = Style::default().bg(menu_key_bg_hover).fg(menu_key_fg_pressed).add_modifier(Modifier::BOLD);
                 lines.push(Spans::from(Span::raw("")));
-                lines.push(Spans::from(vec![Span::raw(" "), if focus0 { Span::styled(format!("{} Use ? marks", cb1), focus_style) } else { Span::raw(format!("{} Use ? marks", cb1)) }]));
-                lines.push(Spans::from(vec![Span::raw(" "), if focus1 { Span::styled(format!("{} ASCII icons", cb2), focus_style) } else { Span::raw(format!("{} ASCII icons", cb2)) }]));
+                lines.push(Spans::from(vec![Span::raw(" "), if focus0 { Span::styled(format!("{} Show indicator", cb0), focus_style) } else { Span::raw(format!("{} Show indicator", cb0)) }]));
+                lines.push(Spans::from(vec![Span::raw(" "), if focus1 { Span::styled(format!("{} Use ? marks", cb1), focus_style) } else { Span::raw(format!("{} Use ? marks", cb1)) }]));
+                lines.push(Spans::from(vec![Span::raw(" "), if focus2 { Span::styled(format!("{} ASCII icons", cb2), focus_style) } else { Span::raw(format!("{} ASCII icons", cb2)) }]));
                 let p = Paragraph::new(Text::from(lines)).alignment(Alignment::Left);
                 f.render_widget(p, inner);
                 // checkbox rects for mouse interaction
                 // Only make the clickable area cover the visible label text, not the whole line
+                let label0 = format!("{} Show indicator", if ui.options_indicator { "[x]" } else { "[ ]" });
                 let label1 = format!("{} Use ? marks", if ui.options_use_q { "[x]" } else { "[ ]" });
                 let label2 = format!("{} Ascii icons", if ui.options_ascii { "[x]" } else { "[ ]" });
+                let w0 = label0.width() as u16;
                 let w1 = label1.width() as u16;
                 let w2 = label2.width() as u16;
-                ui.options_use_q_rect = Some(Rect::new(inner.x + 1, inner.y + 1, w1, 1));
-                ui.options_ascii_rect = Some(Rect::new(inner.x + 1, inner.y + 2, w2, 1));
+                ui.options_indicator_rect = Some(Rect::new(inner.x + 1, inner.y + 1, w0, 1));
+                ui.options_use_q_rect = Some(Rect::new(inner.x + 1, inner.y + 2, w1, 1));
+                ui.options_ascii_rect = Some(Rect::new(inner.x + 1, inner.y + 3, w2, 1));
                 // OK button
                 let btn_w = 5u16;
                 let bx = inner.x + (inner.width.saturating_sub(btn_w)) / 2;
@@ -920,6 +932,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                 match code {
                                     KeyCode::Esc => { ui.showing_options = false; ui.modal_rect = None; ui.modal_close_rect = None; ui.modal_close_pressed = false; ui.hover_index = None; ui.options_focus = None },
                                     KeyCode::Enter => {
+                                        cfg.show_indicator = ui.options_indicator;
                                         cfg.use_question_marks = ui.options_use_q;
                                         cfg.ascii_icons = ui.options_ascii;
                                         save_config(&cfg);
@@ -928,16 +941,17 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                     }
                                     KeyCode::Up => {
                                         let f = ui.options_focus.unwrap_or(0);
-                                        ui.options_focus = Some(if f == 0 { 1 } else { f - 1 });
+                                        ui.options_focus = Some(if f == 0 { 2 } else { f - 1 });
                                     }
                                     KeyCode::Down => {
                                         let f = ui.options_focus.unwrap_or(0);
-                                        ui.options_focus = Some((f + 1) % 2);
+                                        ui.options_focus = Some((f + 1) % 3);
                                     }
                                     KeyCode::Char(' ') => {
                                         match ui.options_focus.unwrap_or(0) {
-                                            0 => ui.options_use_q = !ui.options_use_q,
-                                            1 => ui.options_ascii = !ui.options_ascii,
+                                            0 => ui.options_indicator = !ui.options_indicator,
+                                            1 => ui.options_use_q = !ui.options_use_q,
+                                            2 => ui.options_ascii = !ui.options_ascii,
                                             _ => {}
                                         }
                                     }
@@ -989,7 +1003,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                     KeyCode::F(2) => { let (w,h,m) = cfg.difficulty.params(); game = Game::new(w,h,m); reset_ui_after_new_game(&mut game, &mut ui); }
                                     KeyCode::F(4) => { ui.showing_record = true }
                                         KeyCode::F(5) => { if !ui.showing_difficulty { difficulty_selected = cfg.difficulty.to_index(); } ui.showing_difficulty = !ui.showing_difficulty }
-                                        KeyCode::F(7) => { ui.options_use_q = cfg.use_question_marks; ui.options_ascii = cfg.ascii_icons; ui.options_focus = Some(0); ui.showing_options = true }
+                                                                KeyCode::F(7) => { ui.options_use_q = cfg.use_question_marks; ui.options_ascii = cfg.ascii_icons; ui.options_indicator = cfg.show_indicator; ui.options_focus = Some(0); ui.showing_options = true }
                                     KeyCode::F(9) => { ui.showing_about = true }
                                     KeyCode::Char('o') if modifiers.contains(KeyModifiers::CONTROL) => { if !ui.showing_difficulty { difficulty_selected = cfg.difficulty.to_index(); } ui.showing_difficulty = !ui.showing_difficulty }
                                     KeyCode::Left => { game.step_cursor(-1,0); ui.cursor_indicator = Some(game.cursor); }
@@ -1104,20 +1118,40 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                     if let Some(btn) = ui.modal_close_rect {
                                         let in_btn = me.column >= btn.x && me.column <= btn.x + btn.width.saturating_sub(1) && me.row >= btn.y && me.row <= btn.y + btn.height.saturating_sub(1);
                                         ui.modal_close_hovered = in_btn;
-                                    } else if ui.showing_options {
-                                        // Options modal: update focus on hover (no toggle here)
-                                        if let Some(rect) = ui.options_use_q_rect {
+                                    } else {
+                                        ui.modal_close_hovered = false;
+                                    }
+                                    // Always handle options hover when the options modal is shown
+                                    if ui.showing_options {
+                                        // Prefer per-rect detection (text width)
+                                        if let Some(rect) = ui.options_indicator_rect {
                                             if me.column >= rect.x && me.column <= rect.x + rect.width.saturating_sub(1) && me.row >= rect.y && me.row <= rect.y + rect.height.saturating_sub(1) {
                                                 ui.options_focus = Some(0);
                                             }
                                         }
-                                        if let Some(rect) = ui.options_ascii_rect {
+                                        if let Some(rect) = ui.options_use_q_rect {
                                             if me.column >= rect.x && me.column <= rect.x + rect.width.saturating_sub(1) && me.row >= rect.y && me.row <= rect.y + rect.height.saturating_sub(1) {
                                                 ui.options_focus = Some(1);
                                             }
                                         }
-                                    } else {
-                                        ui.modal_close_hovered = false;
+                                        if let Some(rect) = ui.options_ascii_rect {
+                                            if me.column >= rect.x && me.column <= rect.x + rect.width.saturating_sub(1) && me.row >= rect.y && me.row <= rect.y + rect.height.saturating_sub(1) {
+                                                ui.options_focus = Some(2);
+                                            }
+                                        }
+                                        // Also allow hovering the whole line inside the modal to set focus
+                                        if let Some(m) = ui.modal_rect {
+                                            let inner = Rect::new(m.x + 1, m.y + 1, m.width.saturating_sub(2), m.height.saturating_sub(2));
+                                            if me.column >= inner.x && me.column <= inner.x + inner.width.saturating_sub(1) && me.row >= inner.y && me.row <= inner.y + inner.height.saturating_sub(1) {
+                                                let local_row = me.row as i32 - inner.y as i32; // 0-based
+                                                match local_row {
+                                                    1 => ui.options_focus = Some(0),
+                                                    2 => ui.options_focus = Some(1),
+                                                    3 => ui.options_focus = Some(2),
+                                                    _ => {}
+                                                }
+                                            }
+                                        }
                                     }
                                     // if difficulty modal, update hovered option based on mouse row
                                     if ui.showing_difficulty && ui.custom_input_mode.is_none() {
@@ -1145,17 +1179,24 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                     // click inside modal: handle custom input mode or difficulty selection
                                     // Options modal click handling
                                     if ui.showing_options {
+                                        if let Some(rect) = ui.options_indicator_rect {
+                                            if me.column >= rect.x && me.column <= rect.x + rect.width.saturating_sub(1) && me.row >= rect.y && me.row <= rect.y + rect.height.saturating_sub(1) {
+                                                ui.options_indicator = !ui.options_indicator;
+                                                ui.options_focus = Some(0);
+                                                continue;
+                                            }
+                                        }
                                         if let Some(rect) = ui.options_use_q_rect {
                                             if me.column >= rect.x && me.column <= rect.x + rect.width.saturating_sub(1) && me.row >= rect.y && me.row <= rect.y + rect.height.saturating_sub(1) {
                                                 ui.options_use_q = !ui.options_use_q;
-                                                ui.options_focus = Some(0);
+                                                ui.options_focus = Some(1);
                                                 continue;
                                             }
                                         }
                                         if let Some(rect) = ui.options_ascii_rect {
                                             if me.column >= rect.x && me.column <= rect.x + rect.width.saturating_sub(1) && me.row >= rect.y && me.row <= rect.y + rect.height.saturating_sub(1) {
                                                 ui.options_ascii = !ui.options_ascii;
-                                                ui.options_focus = Some(1);
+                                                ui.options_focus = Some(2);
                                                 continue;
                                             }
                                         }
@@ -1274,6 +1315,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                                 // CLOSE/OK button in difficulty/other modals
                                                 if ui.showing_options {
                                                     // apply option changes
+                                                    cfg.show_indicator = ui.options_indicator;
                                                     cfg.use_question_marks = ui.options_use_q;
                                                     cfg.ascii_icons = ui.options_ascii;
                                                     save_config(&cfg);
@@ -1384,7 +1426,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                                     1 => { let (w,h,m) = cfg.difficulty.params(); game = Game::new(w,h,m); reset_ui_after_new_game(&mut game, &mut ui); },
                                                     2 => ui.showing_record = true,
                                                     3 => { if !ui.showing_difficulty { difficulty_selected = cfg.difficulty.to_index(); } ui.showing_difficulty = true },
-                                                    4 => { ui.options_use_q = cfg.use_question_marks; ui.options_ascii = cfg.ascii_icons; ui.options_focus = Some(0); ui.showing_options = true },
+                                                    4 => { ui.options_use_q = cfg.use_question_marks; ui.options_ascii = cfg.ascii_icons; ui.options_indicator = cfg.show_indicator; ui.options_focus = Some(0); ui.showing_options = true },
                                                     5 => ui.showing_about = true,
                                                     _ => {}
                                                 }
