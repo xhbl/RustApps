@@ -1,6 +1,6 @@
 ﻿[package]
 name = "xtswpr"
-version = "1.3.25"
+version = "1.3.28"
 edition = "2024"
 authors = ["XHBL <newxhbl@hotmail.com>"]
 description = "A terminal-based classic Minesweeper game"
