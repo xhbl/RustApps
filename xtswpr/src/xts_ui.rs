@@ -40,7 +40,7 @@ struct UiState {
     modal_close_pressed: bool,
     modal_rect: Option<Rect>,
     modal_close_rect: Option<Rect>,
-    showing_options: bool,
+    showing_difficulty: bool,
     showing_about: bool,
     showing_help: bool,
     showing_record: bool,
@@ -74,7 +74,7 @@ impl UiState {
             modal_close_pressed: false,
             modal_rect: None,
             modal_close_rect: None,
-            showing_options: false,
+            showing_difficulty: false,
             showing_about: false,
             showing_help: false,
             showing_record: false,
@@ -111,7 +111,7 @@ impl UiState {
         self.modal_close_pressed = false;
         self.modal_rect = None;
         self.modal_close_rect = None;
-        self.showing_options = false;
+        self.showing_difficulty = false;
         self.showing_about = false;
         self.showing_help = false;
         self.showing_record = false;
@@ -150,7 +150,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
         ("F9", "About"),
         ("Esc", "Exit"),
     ];
-    let mut options_selected: usize = cfg.difficulty.to_index();
+    let mut difficulty_selected: usize = cfg.difficulty.to_index();
     let mut exit_requested: bool = false;
 
     // Centralized glyph definitions: change characters/colors here to alter appearance globally
@@ -336,7 +336,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
 
             // modals
             ui.modal_close_rect = None;
-            if ui.showing_options {
+            if ui.showing_difficulty {
                 // If in custom input mode, show a larger dialog for input
                 if ui.custom_input_mode.is_some() {
                     let mrect = centered_block(42, 10, size);
@@ -434,7 +434,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                     
                     // Pre-defined difficulties
                                     for (i, d) in [Difficulty::Beginner, Difficulty::Intermediate, Difficulty::Expert].iter().enumerate() {
-                                        let mark = if i == options_selected { "*" } else { " " };
+                                        let mark = if i == difficulty_selected { "*" } else { " " };
                                         let (ww, hh, mn) = d.params();
                                         let idx = format!(" {} ", i + 1);
                                         // Build name field using display width so wide characters align
@@ -444,7 +444,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                         let name_pad = name_col_w.saturating_sub(name_disp_w);
                                         let name_field = format!("{}{}", name, " ".repeat(name_pad));
                                         let suffix = format!(") {} {:>2}x{:<2}  {} mines", name_field, ww, hh, mn);
-                                        let mark_style = if i == options_selected { Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD) } else { Style::default() };
+                                        let mark_style = if i == difficulty_selected { Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD) } else { Style::default() };
                                         let spans = Spans::from(vec![
                                             Span::raw(idx),
                                             Span::styled(mark, mark_style),
@@ -454,8 +454,8 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                     }
                     
                     // Custom difficulty option
-                    let mark = if options_selected == 3 { "*" } else { " " };
-                    let mark_style = if options_selected == 3 { Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD) } else { Style::default() };
+                    let mark = if difficulty_selected == 3 { "*" } else { " " };
+                    let mark_style = if difficulty_selected == 3 { Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD) } else { Style::default() };
                     let idx = " 4 ";
                     let (cw, ch, cn) = (cfg.custom_w, cfg.custom_h, cfg.custom_n);
                     let name = Difficulty::names()[3];
@@ -679,7 +679,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                 Event::Key(KeyEvent{code, modifiers, kind, ..}) => {
                     match kind {
                         KeyEventKind::Press => {
-                            if ui.showing_options {
+                            if ui.showing_difficulty {
                                 // Handle custom difficulty input mode
                                 if ui.custom_input_mode.is_some() {
                                     match code {
@@ -770,7 +770,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                                     save_config(&cfg);
                                                     game = Game::new(w, h, n);
                                                     reset_ui_after_new_game(&mut game, &mut ui);
-                                                    ui.showing_options = false;
+                                                    ui.showing_difficulty = false;
                                                     ui.custom_input_mode = None;
                                                     ui.custom_w_str.clear();
                                                     ui.custom_h_str.clear();
@@ -788,7 +788,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                             ui.custom_h_str.clear();
                                             ui.custom_n_str.clear();
                                             ui.custom_error_msg = None;
-                                            options_selected = cfg.difficulty.to_index();
+                                            difficulty_selected = cfg.difficulty.to_index();
                                         }
                                         _ => {}
                                     }
@@ -796,47 +796,47 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                     // Normal difficulty selection mode
                                     match code {
                                         KeyCode::Char('1') => {
-                                            options_selected = 0;
+                                            difficulty_selected = 0;
                                             cfg.difficulty = Difficulty::Beginner;
                                             save_config(&cfg);
                                             let (w,h,m) = cfg.difficulty.params();
                                             game = Game::new(w,h,m);
                                             reset_ui_after_new_game(&mut game, &mut ui);
-                                            ui.showing_options = false;
+                                            ui.showing_difficulty = false;
                                             ui.modal_rect = None; ui.modal_close_rect = None; ui.modal_close_pressed = false;
                                         }
                                         KeyCode::Char('2') => {
-                                            options_selected = 1;
+                                            difficulty_selected = 1;
                                             cfg.difficulty = Difficulty::Intermediate;
                                             save_config(&cfg);
                                             let (w,h,m) = cfg.difficulty.params();
                                             game = Game::new(w,h,m);
                                             reset_ui_after_new_game(&mut game, &mut ui);
-                                            ui.showing_options = false;
+                                            ui.showing_difficulty = false;
                                             ui.modal_rect = None; ui.modal_close_rect = None; ui.modal_close_pressed = false;
                                         }
                                         KeyCode::Char('3') => {
-                                            options_selected = 2;
+                                            difficulty_selected = 2;
                                             cfg.difficulty = Difficulty::Expert;
                                             save_config(&cfg);
                                             let (w,h,m) = cfg.difficulty.params();
                                             game = Game::new(w,h,m);
                                             reset_ui_after_new_game(&mut game, &mut ui);
-                                            ui.showing_options = false;
+                                                        ui.showing_difficulty = false;
                                             ui.modal_rect = None; ui.modal_close_rect = None; ui.modal_close_pressed = false;
                                         }
                                         KeyCode::Char('4') => {
-                                            options_selected = 3;
+                                            difficulty_selected = 3;
                                             ui.custom_input_mode = Some(0);
                                             ui.custom_w_str = format!("{}", cfg.custom_w);
                                             ui.custom_h_str = format!("{}", cfg.custom_h);
                                             ui.custom_n_str = format!("{}", cfg.custom_n);
                                             ui.custom_error_msg = None;
                                         }
-                                        KeyCode::Up => { if options_selected == 0 { options_selected = 3 } else { options_selected -= 1 } }
-                                        KeyCode::Down => { options_selected = (options_selected + 1) % 4 }
+                                        KeyCode::Up => { if difficulty_selected == 0 { difficulty_selected = 3 } else { difficulty_selected -= 1 } }
+                                        KeyCode::Down => { difficulty_selected = (difficulty_selected + 1) % 4 }
                                         KeyCode::Enter | KeyCode::Char(' ') => {
-                                            if options_selected == 3 {
+                                            if difficulty_selected == 3 {
                                                 // Enter custom input mode
                                                 ui.custom_input_mode = Some(0);
                                                 ui.custom_w_str = format!("{}", cfg.custom_w);
@@ -844,16 +844,16 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                                 ui.custom_n_str = format!("{}", cfg.custom_n);
                                                 ui.custom_error_msg = None;
                                             } else {
-                                                cfg.difficulty = Difficulty::from_index(options_selected, cfg.custom_w, cfg.custom_h, cfg.custom_n);
+                                                cfg.difficulty = Difficulty::from_index(difficulty_selected, cfg.custom_w, cfg.custom_h, cfg.custom_n);
                                                 save_config(&cfg);
                                                 let (w,h,m) = cfg.difficulty.params();
                                                 game = Game::new(w,h,m);
                                                 reset_ui_after_new_game(&mut game, &mut ui);
-                                                ui.showing_options = false;
+                                                    ui.showing_difficulty = false;
                                                 ui.modal_rect = None; ui.modal_close_rect = None; ui.modal_close_pressed = false;
                                             }
                                         }
-                                        KeyCode::Esc => { ui.showing_options = false; ui.modal_rect = None; ui.modal_close_rect = None; ui.modal_close_pressed = false }
+                                        KeyCode::Esc => { ui.showing_difficulty = false; ui.modal_rect = None; ui.modal_close_rect = None; ui.modal_close_pressed = false }
                                         _ => {}
                                     }
                                 }
@@ -904,9 +904,9 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                     KeyCode::F(1) => { ui.showing_help = true }
                                     KeyCode::F(2) => { let (w,h,m) = cfg.difficulty.params(); game = Game::new(w,h,m); reset_ui_after_new_game(&mut game, &mut ui); }
                                     KeyCode::F(4) => { ui.showing_record = true }
-                                    KeyCode::F(5) => { if !ui.showing_options { options_selected = cfg.difficulty.to_index(); } ui.showing_options = !ui.showing_options }
+                                        KeyCode::F(5) => { if !ui.showing_difficulty { difficulty_selected = cfg.difficulty.to_index(); } ui.showing_difficulty = !ui.showing_difficulty }
                                     KeyCode::F(9) => { ui.showing_about = true }
-                                    KeyCode::Char('o') if modifiers.contains(KeyModifiers::CONTROL) => { if !ui.showing_options { options_selected = cfg.difficulty.to_index(); } ui.showing_options = !ui.showing_options }
+                                    KeyCode::Char('o') if modifiers.contains(KeyModifiers::CONTROL) => { if !ui.showing_difficulty { difficulty_selected = cfg.difficulty.to_index(); } ui.showing_difficulty = !ui.showing_difficulty }
                                     KeyCode::Left => { game.step_cursor(-1,0); ui.mouse_arrow = Some(game.cursor); }
                                     KeyCode::Right => { game.step_cursor(1,0); ui.mouse_arrow = Some(game.cursor); }
                                     KeyCode::Up => { game.step_cursor(0,-1); ui.mouse_arrow = Some(game.cursor); }
@@ -931,7 +931,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                         }
                         KeyEventKind::Release => {
                             // handle key releases for reveal / chord
-                            if ui.showing_options || ui.showing_about || ui.showing_help || ui.showing_record || ui.showing_win || ui.showing_loss {
+                            if ui.showing_difficulty || ui.showing_about || ui.showing_help || ui.showing_record || ui.showing_win || ui.showing_loss {
                                 // ignore releases in modals (they are handled on press)
                             } else {
                                 match code {
@@ -996,7 +996,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                 Event::Mouse(me) => {
                     // if a modal is open, only respond to mouse events inside modal; otherwise handle menu
                     if let Some(mrect) = ui.modal_rect {
-                        // check inside modal; if outside and click -> close modal; if inside and Options -> handle item hover/click
+                        // check inside modal; if outside and click -> close modal; if inside and difficulty items -> handle item hover/click
                         match me.kind {
                             MouseEventKind::Moved => {
                                 let inside = me.column >= mrect.x && me.column <= mrect.x + mrect.width.saturating_sub(1) && me.row >= mrect.y && me.row <= mrect.y + mrect.height.saturating_sub(1);
@@ -1011,12 +1011,12 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                     } else {
                                         ui.modal_close_hovered = false;
                                     }
-                                    // if options modal, update hovered option based on mouse row
-                                    if ui.showing_options && ui.custom_input_mode.is_none() {
+                                    // if difficulty modal, update hovered option based on mouse row
+                                    if ui.showing_difficulty && ui.custom_input_mode.is_none() {
                                         let local_row = me.row as i32 - (mrect.y as i32) - 1; // 0-based within content
-                                        // content layout: 0:blank,1..4:options,5:blank
+                                        // content layout: 0:blank,1..4:difficulty items,5:blank
                                         if local_row >= 1 && local_row <= 4 {
-                                            options_selected = (local_row - 1) as usize;
+                                            difficulty_selected = (local_row - 1) as usize;
                                         }
                                     }
                                 }
@@ -1034,8 +1034,8 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                             continue;
                                         }
                                     }
-                                    // click inside modal: handle custom input mode or options selection
-                                    if ui.showing_options {
+                                    // click inside modal: handle custom input mode or difficulty selection
+                                    if ui.showing_difficulty {
                                         // Handle custom input mode mouse clicks
                                         if ui.custom_input_mode.is_some() {
                                             // Check which input field was clicked
@@ -1063,7 +1063,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                             if local_row >= 1 && local_row <= 4 {
                                                 let idx = (local_row - 1) as usize;
                                                 if idx <= 3 {
-                                                    options_selected = idx;
+                                                    difficulty_selected = idx;
                                                     if idx == 3 {
                                                         // Enter custom input mode
                                                         ui.custom_input_mode = Some(0);
@@ -1073,12 +1073,12 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                                         ui.custom_error_msg = None;
                                                     } else {
                                                         // apply selection immediately
-                                                        cfg.difficulty = Difficulty::from_index(options_selected, cfg.custom_w, cfg.custom_h, cfg.custom_n);
+                                                        cfg.difficulty = Difficulty::from_index(difficulty_selected, cfg.custom_w, cfg.custom_h, cfg.custom_n);
                                                         save_config(&cfg);
                                                         let (w,h,m) = cfg.difficulty.params();
                                                         game = Game::new(w,h,m);
                                                         reset_ui_after_new_game(&mut game, &mut ui);
-                                                        ui.showing_options = false;
+                                                        ui.showing_difficulty = false;
                                                         // clear modal geometry so subsequent mouse events are handled by main UI
                                                         ui.modal_rect = None;
                                                         ui.modal_close_rect = None;
@@ -1133,7 +1133,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                                         save_config(&cfg);
                                                         game = Game::new(w, h, n);
                                                         reset_ui_after_new_game(&mut game, &mut ui);
-                                                        ui.showing_options = false;
+                                                        ui.showing_difficulty = false;
                                                         ui.custom_input_mode = None;
                                                         ui.custom_w_str.clear();
                                                         ui.custom_h_str.clear();
@@ -1148,7 +1148,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                                 // CLOSE button in difficulty/other modals
                                                 let was_win = ui.showing_win;
                                                 let was_loss = ui.showing_loss;
-                                                ui.showing_options = false;
+                                                ui.showing_difficulty = false;
                                                 ui.showing_about = false;
                                                 ui.showing_help = false;
                                                 ui.showing_record = false;
@@ -1177,7 +1177,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                     ui.custom_h_str.clear();
                                     ui.custom_n_str.clear();
                                     ui.custom_error_msg = None;
-                                    options_selected = cfg.difficulty.to_index();
+                                    difficulty_selected = cfg.difficulty.to_index();
                                 }
                             }
                             _ => {}
@@ -1225,7 +1225,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                                     0 => ui.showing_help = true,
                                                     1 => { let (w,h,m) = cfg.difficulty.params(); game = Game::new(w,h,m); reset_ui_after_new_game(&mut game, &mut ui); },
                                                     2 => ui.showing_record = true,
-                                                    3 => { if !ui.showing_options { options_selected = cfg.difficulty.to_index(); } ui.showing_options = true },
+                                                    3 => { if !ui.showing_difficulty { difficulty_selected = cfg.difficulty.to_index(); } ui.showing_difficulty = true },
                                                     4 => ui.showing_about = true,
                                                     _ => {}
                                                 }
