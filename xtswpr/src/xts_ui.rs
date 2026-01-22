@@ -181,6 +181,23 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
     let mut difficulty_selected: usize = cfg.difficulty.to_index();
     let mut exit_requested: bool = false;
 
+    // Glyph computation helper: compute glyphs based on ascii_icons setting.
+    let make_glyphs = |ascii: bool| {
+        (
+            (if ascii { "▪" } else { "■" }, Color::Gray.wtmatch()),
+            (if ascii { "*" } else { "☼" }, Color::Black.wtmatch()),
+            (if ascii { "F" } else { "⚑" }, Color::Red.wtmatch()),
+            ("?", Color::Red.wtmatch()),
+        )
+    };
+
+    // initialize glyphs once from current config
+    let g_init = make_glyphs(cfg.ascii_icons);
+    let mut glyph_unopened = g_init.0;
+    let mut glyph_mine = g_init.1;
+    let mut glyph_flag = g_init.2;
+    let mut glyph_question = g_init.3;
+
     // Centralized glyph/color definitions are computed per-frame inside the draw closure
     // Background color for the minefield (change this variable to alter background)
     let board_bg = Color::DarkGray.wtmatch();
@@ -297,11 +314,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
             f.render_widget(status, chunks[2]);
             status_rect = Some(chunks[2]);
 
-            // Centralized glyph definitions: change characters/colors here to alter appearance globally
-            let glyph_unopened = (if cfg.ascii_icons { "▪" } else { "■" }, Color::Gray.wtmatch());
-            let glyph_mine     = (if cfg.ascii_icons { "*" } else { "☼" }, Color::Black.wtmatch());
-            let glyph_flag     = (if cfg.ascii_icons { "F" } else { "⚑" }, Color::Red.wtmatch());
-            let glyph_question = ("?", Color::Red.wtmatch());
+            // glyphs are computed outside the main loop and updated when config changes
 
             // board area
             let board_area = centered_block(((game.w * 2) as u16) + 3, (game.h as u16) + 2, chunks[1]);
@@ -973,6 +986,12 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                         cfg.show_indicator = ui.options_indicator;
                                         cfg.use_question_marks = ui.options_use_q;
                                         cfg.ascii_icons = ui.options_ascii;
+                                        // update glyphs when ascii_icons changes
+                                        let g = make_glyphs(cfg.ascii_icons);
+                                        glyph_unopened = g.0;
+                                        glyph_mine = g.1;
+                                        glyph_flag = g.2;
+                                        glyph_question = g.3;
                                         save_config(&cfg);
                                         ui.showing_options = false;
                                         ui.modal_rect = None; ui.modal_close_rect = None; ui.modal_close_pressed = false; ui.hover_index = None; ui.options_focus = None
@@ -1357,7 +1376,13 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                                     // apply option changes
                                                     cfg.show_indicator = ui.options_indicator;
                                                     cfg.use_question_marks = ui.options_use_q;
-                                                    cfg.ascii_icons = ui.options_ascii;
+                                                        cfg.ascii_icons = ui.options_ascii;
+                                                        // update glyphs when ascii_icons changes
+                                                        let g = make_glyphs(cfg.ascii_icons);
+                                                        glyph_unopened = g.0;
+                                                        glyph_mine = g.1;
+                                                        glyph_flag = g.2;
+                                                        glyph_question = g.3;
                                                     save_config(&cfg);
                                                     ui.showing_options = false;
                                                     ui.modal_rect = None;
