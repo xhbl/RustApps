@@ -83,7 +83,7 @@ impl UiState {
             showing_difficulty: false,
             showing_about: false,
             showing_options: false,
-            options_use_q: true,
+            options_use_q: false,
             options_ascii: false,
             options_use_q_rect: None,
             options_ascii_rect: None,
@@ -126,7 +126,7 @@ impl UiState {
         self.showing_difficulty = false;
         self.showing_about = false;
         self.showing_options = false;
-        self.options_use_q = true;
+        self.options_use_q = false;
         self.options_ascii = false;
         self.options_use_q_rect = None;
         self.options_ascii_rect = None;
@@ -359,10 +359,10 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
             if ui.showing_difficulty {
                 // If in custom input mode, show a larger dialog for input
                 if ui.custom_input_mode.is_some() {
-                    let mrect = centered_block(42, 11, size);
+                    let mrect = centered_block(42, 10, size);
                     ui.modal_rect = Some(mrect);
                     f.render_widget(Clear, mrect);
-                    f.render_widget(Block::default().borders(Borders::ALL).title(format!("{} Difficulty", Difficulty::Custom(0,0,0).name())), mrect);
+                    f.render_widget(Block::default().borders(Borders::ALL).title(format!("{} {}", Difficulty::Custom(0,0,0).name(), menu_items[3].1)), mrect);
                     let inner = Rect::new(mrect.x + 1, mrect.y + 1, mrect.width.saturating_sub(2), mrect.height.saturating_sub(2));
                     
                     // Calculate max mines based on current W and H input
@@ -445,7 +445,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                     ui.custom_h_rect = None;
                     ui.custom_n_rect = None;
                     // Normal difficulty selection
-                    let mrect = centered_block(42, 11, size);
+                    let mrect = centered_block(42, 10, size);
                     ui.modal_rect = Some(mrect);
                     f.render_widget(Clear, mrect);
                     f.render_widget(Block::default().borders(Borders::ALL).title(menu_items[3].1), mrect);

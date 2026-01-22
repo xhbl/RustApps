@@ -105,7 +105,7 @@ pub struct Config {
 }
 
 impl Default for Config {
-    fn default() -> Self { Config { difficulty: Difficulty::Beginner, best_beginner: None, best_intermediate: None, best_expert: None, custom_w: 36, custom_h: 20, custom_n: 150, use_question_marks: true, ascii_icons: false } }
+    fn default() -> Self { Config { difficulty: Difficulty::Beginner, best_beginner: None, best_intermediate: None, best_expert: None, custom_w: 36, custom_h: 20, custom_n: 150, use_question_marks: false, ascii_icons: false } }
 }
 
 impl Config {
