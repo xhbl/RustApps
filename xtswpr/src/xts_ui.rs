@@ -42,6 +42,7 @@ struct UiState {
     modal_close_rect: Option<Rect>,
     showing_difficulty: bool,
     showing_about: bool,
+    showing_options: bool,
     showing_help: bool,
     showing_record: bool,
     showing_win: bool,
@@ -76,6 +77,7 @@ impl UiState {
             modal_close_rect: None,
             showing_difficulty: false,
             showing_about: false,
+            showing_options: false,
             showing_help: false,
             showing_record: false,
             showing_win: false,
@@ -113,6 +115,7 @@ impl UiState {
         self.modal_close_rect = None;
         self.showing_difficulty = false;
         self.showing_about = false;
+        self.showing_options = false;
         self.showing_help = false;
         self.showing_record = false;
         self.showing_win = false;
@@ -147,6 +150,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
         ("F2", "New"),
         ("F4", "Records"),
         ("F5", "Difficulty"),
+        ("F7", "Options"),
         ("F9", "About"),
         ("Esc", "Exit"),
     ];
@@ -221,7 +225,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
 
             // menu row (per-item styled so hover/click mapping aligns with mouse offsets)
             let mut spans_vec: Vec<Span> = Vec::new();
-            for (i, (label_key, label_rest)) in menu_items.iter().take(5).enumerate() {
+            for (i, (label_key, label_rest)) in menu_items.iter().take(6).enumerate() {
                 if i > 0 {
                     spans_vec.push(Span::raw("   "));
                 }
@@ -493,12 +497,36 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                 let btn = Paragraph::new(Spans::from(Span::styled(btn_text, btn_style))).alignment(Alignment::Center).block(Block::default());
                 f.render_widget(btn, btn_rect);
             }
+            if ui.showing_options {
+                let mrect = centered_block(40,6, size);
+                ui.modal_rect = Some(mrect);
+                f.render_widget(Clear, mrect);
+                f.render_widget(Block::default().borders(Borders::ALL).title(menu_items[4].1), mrect);
+                let inner = Rect::new(mrect.x + 1, mrect.y + 1, mrect.width.saturating_sub(2), mrect.height.saturating_sub(2));
+                let lines = vec![
+                    Spans::from(Span::raw("")),
+                    Spans::from(Span::raw("")),
+                ];
+                let p = Paragraph::new(Text::from(lines)).alignment(Alignment::Center);
+                f.render_widget(p, inner);
+                // OK button
+                let btn_w = 5u16;
+                let bx = inner.x + (inner.width.saturating_sub(btn_w)) / 2;
+                let by = inner.y + inner.height.saturating_sub(1);
+                let btn_rect = Rect::new(bx, by, btn_w, 1);
+                ui.modal_close_rect = Some(btn_rect);
+                let mut btn_style = Style::default().bg(Color::Gray).fg(Color::Black).add_modifier(Modifier::BOLD);
+                if ui.modal_close_pressed { btn_style = Style::default().bg(Color::Green).fg(Color::Black).add_modifier(Modifier::BOLD); }
+                else if ui.modal_close_hovered { btn_style = Style::default().bg(Color::White).fg(Color::Black).add_modifier(Modifier::BOLD); }
+                let btn = Paragraph::new(Spans::from(Span::styled(" OK ", btn_style))).alignment(Alignment::Center).block(Block::default());
+                f.render_widget(btn, btn_rect);
+            }
 
             if ui.showing_about {
                 let mrect = centered_block(48,8, size);
                 ui.modal_rect = Some(mrect);
                 f.render_widget(Clear, mrect);
-                f.render_widget(Block::default().borders(Borders::ALL).title(menu_items[4].1), mrect);
+                f.render_widget(Block::default().borders(Borders::ALL).title(menu_items[5].1), mrect);
                 let inner = Rect::new(mrect.x + 1, mrect.y + 1, mrect.width.saturating_sub(2), mrect.height.saturating_sub(2));
                 let lines = vec![
                     Spans::from(Span::raw("")),
@@ -859,6 +887,8 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                 }
                             } else if ui.showing_about {
                                 match code { KeyCode::Esc => { ui.showing_about = false; ui.modal_rect = None; ui.modal_close_rect = None; ui.modal_close_pressed = false; ui.hover_index = None } _ => { ui.showing_about = false; ui.modal_rect = None; ui.modal_close_rect = None; ui.modal_close_pressed = false; ui.hover_index = None } }
+                            } else if ui.showing_options {
+                                match code { KeyCode::Esc => { ui.showing_options = false; ui.modal_rect = None; ui.modal_close_rect = None; ui.modal_close_pressed = false; ui.hover_index = None } _ => { ui.showing_options = false; ui.modal_rect = None; ui.modal_close_rect = None; ui.modal_close_pressed = false; ui.hover_index = None } }
                             } else if ui.showing_help {
                                 match code { KeyCode::Esc => { ui.showing_help = false; ui.modal_rect = None; ui.modal_close_rect = None; ui.modal_close_pressed = false; ui.hover_index = None } _ => { ui.showing_help = false; ui.modal_rect = None; ui.modal_close_rect = None; ui.modal_close_pressed = false; ui.hover_index = None } }
                             } else if ui.showing_record {
@@ -905,6 +935,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                     KeyCode::F(2) => { let (w,h,m) = cfg.difficulty.params(); game = Game::new(w,h,m); reset_ui_after_new_game(&mut game, &mut ui); }
                                     KeyCode::F(4) => { ui.showing_record = true }
                                         KeyCode::F(5) => { if !ui.showing_difficulty { difficulty_selected = cfg.difficulty.to_index(); } ui.showing_difficulty = !ui.showing_difficulty }
+                                    KeyCode::F(7) => { ui.showing_options = true }
                                     KeyCode::F(9) => { ui.showing_about = true }
                                     KeyCode::Char('o') if modifiers.contains(KeyModifiers::CONTROL) => { if !ui.showing_difficulty { difficulty_selected = cfg.difficulty.to_index(); } ui.showing_difficulty = !ui.showing_difficulty }
                                     KeyCode::Left => { game.step_cursor(-1,0); ui.mouse_arrow = Some(game.cursor); }
@@ -931,7 +962,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                         }
                         KeyEventKind::Release => {
                             // handle key releases for reveal / chord
-                            if ui.showing_difficulty || ui.showing_about || ui.showing_help || ui.showing_record || ui.showing_win || ui.showing_loss {
+                            if ui.showing_difficulty || ui.showing_about || ui.showing_options || ui.showing_help || ui.showing_record || ui.showing_win || ui.showing_loss {
                                 // ignore releases in modals (they are handled on press)
                             } else {
                                 match code {
@@ -1150,6 +1181,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                                 let was_loss = ui.showing_loss;
                                                 ui.showing_difficulty = false;
                                                 ui.showing_about = false;
+                                                ui.showing_options = false;
                                                 ui.showing_help = false;
                                                 ui.showing_record = false;
                                                 ui.showing_win = false;
@@ -1194,7 +1226,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                     MouseEventKind::Moved => {
                                         let mut offset = start_x;
                                         let mut found: Option<usize> = None;
-                                        for (i, (k, r)) in menu_items.iter().take(5).enumerate() {
+                                        for (i, (k, r)) in menu_items.iter().take(6).enumerate() {
                                             if i > 0 { offset += 3; }
                                             // account for the ": " we add when rendering (use display width)
                                             let full_len = (k.width() + 2 + r.width()) as u16;
@@ -1213,7 +1245,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                     MouseEventKind::Down(MouseButton::Left) => {
                                         let mut consumed = false;
                                         let mut offset = start_x;
-                                        for (i, (k, r)) in menu_items.iter().take(5).enumerate() {
+                                        for (i, (k, r)) in menu_items.iter().take(6).enumerate() {
                                             if i > 0 { offset += 3; }
                                             // account for the ": " we add when rendering (use display width)
                                             let full_len = (k.width() + 2 + r.width()) as u16;
@@ -1226,7 +1258,8 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                                     1 => { let (w,h,m) = cfg.difficulty.params(); game = Game::new(w,h,m); reset_ui_after_new_game(&mut game, &mut ui); },
                                                     2 => ui.showing_record = true,
                                                     3 => { if !ui.showing_difficulty { difficulty_selected = cfg.difficulty.to_index(); } ui.showing_difficulty = true },
-                                                    4 => ui.showing_about = true,
+                                                    4 => ui.showing_options = true,
+                                                    5 => ui.showing_about = true,
                                                     _ => {}
                                                 }
                                                 consumed = true;
