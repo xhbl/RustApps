@@ -50,6 +50,7 @@ struct UiState {
     options_ascii_rect: Option<Rect>,
     options_indicator_rect: Option<Rect>,
     options_focus: Option<u8>,
+    difficulty_hover: Option<usize>,
     showing_help: bool,
     showing_record: bool,
     showing_win: bool,
@@ -92,6 +93,7 @@ impl UiState {
             options_ascii_rect: None,
             options_indicator_rect: None,
             options_focus: None,
+            difficulty_hover: None,
             showing_help: false,
             showing_record: false,
             showing_win: false,
@@ -137,6 +139,7 @@ impl UiState {
         self.options_ascii_rect = None;
         self.options_indicator_rect = None;
         self.options_focus = None;
+        self.difficulty_hover = None;
         self.showing_help = false;
         self.showing_record = false;
         self.showing_win = false;
@@ -458,9 +461,12 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                     let inner = Rect::new(mrect.x + 1, mrect.y + 1, mrect.width.saturating_sub(2), mrect.height.saturating_sub(2));
                     let mut lines = vec![Spans::from(Span::raw(""))];
                     
-                    // Pre-defined difficulties
+                                    // Pre-defined difficulties
+                                    // compute hovered/selected index for focus-based highlight
+                                    let hover_index = ui.difficulty_hover.unwrap_or(difficulty_selected);
                                     for (i, d) in [Difficulty::Beginner, Difficulty::Intermediate, Difficulty::Expert].iter().enumerate() {
-                                        let mark = if i == difficulty_selected { "*" } else { " " };
+                                        // show star on the hovered item if present, otherwise on the selected item
+                                        let mark = if i == hover_index { "*" } else { " " };
                                         let (ww, hh, mn) = d.params();
                                         let idx = format!(" {} ", i + 1);
                                         // Build name field using display width so wide characters align
@@ -470,18 +476,28 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                         let name_pad = name_col_w.saturating_sub(name_disp_w);
                                         let name_field = format!("{}{}", name, " ".repeat(name_pad));
                                         let suffix = format!(") {} {:>2}x{:<2}  {} mines", name_field, ww, hh, mn);
-                                        let mark_style = if i == difficulty_selected { Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD) } else { Style::default() };
-                                        let spans = Spans::from(vec![
-                                            Span::raw(idx),
-                                            Span::styled(mark, mark_style),
-                                            Span::raw(suffix),
-                                        ]);
-                                        lines.push(spans);
+                                        let focus_style = Style::default().bg(menu_key_bg_hover).fg(menu_key_fg_pressed).add_modifier(Modifier::BOLD);
+                                        if i == hover_index {
+                                            let spans = Spans::from(vec![
+                                                Span::raw(idx),
+                                                Span::styled(mark, focus_style),
+                                                Span::styled(suffix, focus_style),
+                                            ]);
+                                            lines.push(spans);
+                                        } else {
+                                            let mark_style = if i == difficulty_selected { Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD) } else { Style::default() };
+                                            let spans = Spans::from(vec![
+                                                Span::raw(idx),
+                                                Span::styled(mark, mark_style),
+                                                Span::raw(suffix),
+                                            ]);
+                                            lines.push(spans);
+                                        }
                                     }
                     
-                    // Custom difficulty option
-                    let mark = if difficulty_selected == 3 { "*" } else { " " };
-                    let mark_style = if difficulty_selected == 3 { Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD) } else { Style::default() };
+                    // Custom difficulty option: support hover highlight and star on hover
+                    let hover_index = ui.difficulty_hover.unwrap_or(difficulty_selected);
+                    let mark = if hover_index == 3 { "*" } else { " " };
                     let idx = " 4 ";
                     let (cw, ch, cn) = (cfg.custom_w, cfg.custom_h, cfg.custom_n);
                     let name = Difficulty::names()[3];
@@ -490,12 +506,23 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                     let name_pad = name_col_w.saturating_sub(name_disp_w);
                     let name_field = format!("{}{}", name, " ".repeat(name_pad));
                     let suffix = format!(") {} {:>2}x{:<2}  {} mines", name_field, cw, ch, cn);
-                    let spans = Spans::from(vec![
-                        Span::raw(idx),
-                        Span::styled(mark, mark_style),
-                        Span::raw(suffix),
-                    ]);
-                    lines.push(spans);
+                    let focus_style = Style::default().bg(menu_key_bg_hover).fg(menu_key_fg_pressed).add_modifier(Modifier::BOLD);
+                    if hover_index == 3 {
+                        let spans = Spans::from(vec![
+                            Span::raw(idx),
+                            Span::styled(mark, focus_style),
+                            Span::styled(suffix, focus_style),
+                        ]);
+                        lines.push(spans);
+                    } else {
+                        let mark_style = if difficulty_selected == 3 { Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD) } else { Style::default() };
+                        let spans = Spans::from(vec![
+                            Span::raw(idx),
+                            Span::styled(mark, mark_style),
+                            Span::raw(suffix),
+                        ]);
+                        lines.push(spans);
+                    }
                     
                     lines.push(Spans::from(Span::raw("")));
                     let p = Paragraph::new(Text::from(lines)).alignment(Alignment::Left);
@@ -896,14 +923,25 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                         }
                                         KeyCode::Char('4') => {
                                             difficulty_selected = 3;
+                                            ui.difficulty_hover = Some(3);
                                             ui.custom_input_mode = Some(0);
                                             ui.custom_w_str = format!("{}", cfg.custom_w);
                                             ui.custom_h_str = format!("{}", cfg.custom_h);
                                             ui.custom_n_str = format!("{}", cfg.custom_n);
                                             ui.custom_error_msg = None;
                                         }
-                                        KeyCode::Up => { if difficulty_selected == 0 { difficulty_selected = 3 } else { difficulty_selected -= 1 } }
-                                        KeyCode::Down => { difficulty_selected = (difficulty_selected + 1) % 4 }
+                                        KeyCode::Up => {
+                                            let base = ui.difficulty_hover.unwrap_or(difficulty_selected);
+                                            let new_idx = if base == 0 { 3 } else { base - 1 };
+                                            difficulty_selected = new_idx;
+                                            ui.difficulty_hover = Some(new_idx);
+                                        }
+                                        KeyCode::Down => {
+                                            let base = ui.difficulty_hover.unwrap_or(difficulty_selected);
+                                            let new_idx = (base + 1) % 4;
+                                            difficulty_selected = new_idx;
+                                            ui.difficulty_hover = Some(new_idx);
+                                        }
                                         KeyCode::Enter | KeyCode::Char(' ') => {
                                             if difficulty_selected == 3 {
                                                 // Enter custom input mode
@@ -1158,7 +1196,9 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                         let local_row = me.row as i32 - (mrect.y as i32) - 1; // 0-based within content
                                         // content layout: 0:blank,1..4:difficulty items,5:blank
                                         if local_row >= 1 && local_row <= 4 {
-                                            difficulty_selected = (local_row - 1) as usize;
+                                            ui.difficulty_hover = Some((local_row - 1) as usize);
+                                        } else {
+                                            ui.difficulty_hover = None;
                                         }
                                     }
                                 }
