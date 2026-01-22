@@ -1210,6 +1210,26 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                     ui.custom_n_str.clear();
                                     ui.custom_error_msg = None;
                                     difficulty_selected = cfg.difficulty.to_index();
+                                } else {
+                                    // Right-click anywhere in a modal should close it (like Esc)
+                                    let was_win = ui.showing_win;
+                                    let was_loss = ui.showing_loss;
+                                    ui.showing_difficulty = false;
+                                    ui.showing_about = false;
+                                    ui.showing_options = false;
+                                    ui.showing_help = false;
+                                    ui.showing_record = false;
+                                    ui.showing_win = false;
+                                    ui.showing_loss = false;
+                                    ui.modal_rect = None;
+                                    ui.modal_close_rect = None;
+                                    ui.modal_close_pressed = false;
+                                    ui.hover_index = None;
+                                    if was_win || was_loss {
+                                        let (ww,hh,mm) = cfg.difficulty.params();
+                                        game = Game::new(ww, hh, mm);
+                                        reset_ui_after_new_game(&mut game, &mut ui);
+                                    }
                                 }
                             }
                             _ => {}
