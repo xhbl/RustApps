@@ -76,15 +76,6 @@ impl Difficulty {
             _ => Difficulty::Custom(custom_w, custom_h, custom_n),
         }
     }
-
-    pub fn names() -> [&'static str; 4] {
-        [
-            Difficulty::Beginner.name(),
-            Difficulty::Intermediate.name(),
-            Difficulty::Expert.name(),
-            Difficulty::Custom(0, 0, 0).name(),
-        ]
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -103,10 +94,33 @@ pub struct Config {
     pub use_question_marks: bool,
     pub show_indicator: bool,
     pub ascii_icons: bool,
+    pub language: String,
 }
 
 impl Default for Config {
-    fn default() -> Self { Config { difficulty: Difficulty::Beginner, best_beginner: None, best_intermediate: None, best_expert: None, custom_w: 36, custom_h: 20, custom_n: 150, use_question_marks: false, show_indicator: false, ascii_icons: false } }
+    fn default() -> Self { 
+        // Detect system language, default to English if not detected or not Chinese
+        let system_lang = sys_locale::get_locale().unwrap_or_else(|| "en".to_string());
+        let lang = if system_lang.to_lowercase().starts_with("zh") {
+            "zh".to_string()
+        } else {
+            "en".to_string()
+        };
+        
+        Config { 
+            difficulty: Difficulty::Beginner, 
+            best_beginner: None, 
+            best_intermediate: None, 
+            best_expert: None, 
+            custom_w: 36, 
+            custom_h: 20, 
+            custom_n: 150, 
+            use_question_marks: false, 
+            show_indicator: false, 
+            ascii_icons: false,
+            language: lang,
+        } 
+    }
 }
 
 impl Config {
@@ -129,7 +143,7 @@ impl Config {
     }
 
     pub fn set_record(&mut self, d: &Difficulty, secs: u64) {
-        let date = Local::now().format("%Y/%m/%d").to_string();
+        let date = Local::now().format("%Y-%m-%d").to_string();
         match d {
             Difficulty::Beginner => {
                 if self.best_beginner.as_ref().map_or(true, |v| secs < v.secs) {
@@ -260,15 +274,20 @@ impl Game {
         }
     }
 
-    pub fn toggle_flag(&mut self, x: usize, y: usize) {
+    pub fn toggle_flag(&mut self, x: usize, y: usize, use_question_marks: bool) {
         let idx = self.index(x,y);
         if self.revealed[idx] { return }
-        // cycle: 0 -> 1 (flag) -> 2 (question) -> 0
-        self.flagged[idx] = match self.flagged[idx] {
-            0 => 1,
-            1 => 2,
-            _ => 0,
-        };
+        if use_question_marks {
+            // cycle: 0 -> 1 (flag) -> 2 (question) -> 0
+            self.flagged[idx] = match self.flagged[idx] {
+                0 => 1,
+                1 => 2,
+                _ => 0,
+            };
+        } else {
+            // cycle: 0 -> 1 (flag) -> 0 (no question marks)
+            self.flagged[idx] = if self.flagged[idx] == 1 { 0 } else { 1 };
+        }
     }
 
     pub fn check_win(&self) -> bool {

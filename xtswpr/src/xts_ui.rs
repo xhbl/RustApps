@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 
 use crate::xts_color::WTMatch;
 use crate::xts_game::{Game, Config, Difficulty, save_config};
+use crate::xts_lang::Lang;
 use unicode_width::UnicodeWidthStr;
 
 fn reset_ui_after_new_game(game: &mut Game, ui: &mut UiState) {
@@ -49,6 +50,7 @@ struct UiState {
     options_use_q_rect: Option<Rect>,
     options_ascii_rect: Option<Rect>,
     options_indicator_rect: Option<Rect>,
+    options_lang_rect: Option<Rect>,
     options_focus: Option<u8>,
     difficulty_hover: Option<usize>,
     showing_help: bool,
@@ -92,6 +94,7 @@ impl UiState {
             options_use_q_rect: None,
             options_ascii_rect: None,
             options_indicator_rect: None,
+            options_lang_rect: None,
             options_focus: None,
             difficulty_hover: None,
             showing_help: false,
@@ -152,7 +155,7 @@ impl UiState {
     }
 }
 
-pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
+pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
     let (w,h,mines) = cfg.difficulty.params();
 
     enable_raw_mode()?;
@@ -168,18 +171,11 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
     let mut menu_rect: Option<Rect> = None;
     let mut board_rect: Option<Rect> = None;
     let mut status_rect: Option<Rect> = None;
-    // Centralized menu/key items (key, rest). Include Esc here so status can reuse it.
-    let menu_items = [
-        ("F1", "Help"),
-        ("F2", "New"),
-        ("F4", "Records"),
-        ("F5", "Difficulty"),
-        ("F7", "Options"),
-        ("F9", "About"),
-        ("Esc", "Exit"),
-    ];
     let mut difficulty_selected: usize = cfg.difficulty.to_index();
     let mut exit_requested: bool = false;
+
+    // Centralized menu/key items (key, rest). Recreated each iteration to pick up language changes
+    let mut menu_items;
 
     // Glyph computation helper: compute glyphs based on ascii_icons setting.
     let make_glyphs = |ascii: bool| {
@@ -233,20 +229,31 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
     let mut last_tick = Instant::now();
 
     loop {
+        // Update menu items to reflect current language
+        menu_items = [
+            ("F1", lang.assets.menu_help),
+            ("F2", lang.assets.menu_new),
+            ("F4", lang.assets.menu_records),
+            ("F5", lang.assets.menu_difficulty),
+            ("F7", lang.assets.menu_options),
+            ("F9", lang.assets.menu_about),
+            ("Esc", lang.assets.menu_exit),
+        ];
+        
         terminal.draw(|f| {
             let size = f.size();
             let min_twidth = 80u16;
             let min_theight = 24u16 + game.h.saturating_sub(16) as u16;
             // If terminal too small, render a centered warning and skip normal UI
             if size.width < min_twidth || size.height < min_theight {
-                let warn_lines = vec![Spans::from(Span::raw("Terminal size too small.")), Spans::from(Span::raw(format!("Minimum required: {} x {}", min_twidth, min_theight)))];
+                let warn_lines = vec![Spans::from(Span::raw("")), Spans::from(Span::raw(lang.assets.tsmsg_line1)), Spans::from(Span::raw(lang.assets.tsmsg_line2.replacen("{}", &min_twidth.to_string(), 1).replacen("{}", &min_theight.to_string(), 1)))];
                 let warn = Paragraph::new(Text::from(warn_lines))
-                    .block(Block::default().borders(Borders::ALL).title("Resize Terminal"))
+                    .block(Block::default().borders(Borders::ALL).title(lang.assets.tsmsg_title))
                     .alignment(Alignment::Center);
                 // clear screen and render warning centered
                 f.render_widget(Clear, size);
                 let w = 40u16.min(size.width.saturating_sub(2));
-                let h = 5u16.min(size.height.saturating_sub(2));
+                let h = 6u16.min(size.height.saturating_sub(2));
                 let area = center_rect(w, h, size);
                 f.render_widget(warn, area);
                 return;
@@ -284,8 +291,13 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
             menu_rect = Some(chunks[0]);
 
             // status row (left info + right-aligned Esc: Exit)
-            let left_text = format!(" Mines: {}   Time: {}s ", game.remaining_mines(), if game.started { game.start_time.unwrap().elapsed().as_secs() } else { game.elapsed.as_secs() });
-            let esc = menu_items.iter().find(|(k, _)| *k == "Esc").unwrap_or(&("Esc", "Exit"));
+            let mines_count = game.remaining_mines();
+            let time_secs = if game.started { game.start_time.unwrap().elapsed().as_secs() } else { game.elapsed.as_secs() };
+            let left_text = lang.assets.status_mines_fmt
+                .replacen("{}", &mines_count.to_string(), 1)
+                .replacen("{}", &time_secs.to_string(), 1);
+            let esc_fallback = ("Esc", lang.assets.menu_exit);
+            let esc = menu_items.iter().find(|(k, _)| *k == "Esc").unwrap_or(&esc_fallback);
             let right_key = esc.0;
             let right_rest = esc.1;
             let inner_w = chunks[2].width.saturating_sub(2) as usize;
@@ -373,7 +385,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                 spans.push(Span::styled(" ", Style::default().bg(board_bg)));
                 lines.push(Spans::from(spans));
             }
-            let paragraph = Paragraph::new(Text::from(lines)).block(Block::default().borders(Borders::ALL).title(cfg.difficulty.name()).title_alignment(Alignment::Center)).alignment(Alignment::Left);
+            let paragraph = Paragraph::new(Text::from(lines)).block(Block::default().borders(Borders::ALL).title(lang.diff_name(cfg.difficulty.to_index())).title_alignment(Alignment::Center)).alignment(Alignment::Left);
             f.render_widget(paragraph, board_area);
 
             // modals
@@ -384,7 +396,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                     let mrect = centered_block(42, 10, size);
                     ui.modal_rect = Some(mrect);
                     f.render_widget(Clear, mrect);
-                    f.render_widget(Block::default().borders(Borders::ALL).title(format!("{} {}", Difficulty::Custom(0,0,0).name(), menu_items[3].1)), mrect);
+                    f.render_widget(Block::default().borders(Borders::ALL).title(format!("{} {}", lang.assets.diff_custom, menu_items[3].1)), mrect);
                     let inner = Rect::new(mrect.x + 1, mrect.y + 1, mrect.width.saturating_sub(2), mrect.height.saturating_sub(2));
                     
                     // Calculate max mines based on current W and H input
@@ -394,7 +406,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                     
                     let mut lines = vec![Spans::from(Span::raw(""))];
                     
-                    // Use fixed label width for alignment (20 chars)
+                    // Use fixed label width for alignment (20 display columns)
                     let label_width = 20usize;
                     
                     // Check if any field is in flash state (invalid input)
@@ -406,7 +418,9 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                     
                     // Width row - label and input on same line
                     let w_style = if ui.custom_input_mode == Some(0) { Style::default().bg(Color::Yellow).fg(Color::Black) } else { Style::default().bg(Color::DarkGray) };
-                    let w_label = format!("{:<width$}", "Width (9-36):", width = label_width);
+                    let w_text = lang.assets.diff_width_label;
+                    let w_disp_w = w_text.width();
+                    let w_label = format!("{}{}", w_text, " ".repeat(label_width.saturating_sub(w_disp_w)));
                     let w_label_style = if is_flashing && ui.custom_invalid_field == Some((0, ui.custom_invalid_field.unwrap().1)) {
                         Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
                     } else {
@@ -422,7 +436,9 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                     
                     // Height row - label and input on same line
                     let h_style = if ui.custom_input_mode == Some(1) { Style::default().bg(Color::Yellow).fg(Color::Black) } else { Style::default().bg(Color::DarkGray) };
-                    let h_label = format!("{:<width$}", "Height (9-24):", width = label_width);
+                    let h_text = lang.assets.diff_height_label;
+                    let h_disp_w = h_text.width();
+                    let h_label = format!("{}{}", h_text, " ".repeat(label_width.saturating_sub(h_disp_w)));
                     let h_label_style = if is_flashing && ui.custom_invalid_field == Some((1, ui.custom_invalid_field.unwrap().1)) {
                         Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
                     } else {
@@ -438,7 +454,9 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                     
                     // Mines row - label shows actual max value and input on same line
                     let n_style = if ui.custom_input_mode == Some(2) { Style::default().bg(Color::Yellow).fg(Color::Black) } else { Style::default().bg(Color::DarkGray) };
-                    let n_label = format!("{:<width$}", format!("Mines (10-{}):", max_mines), width = label_width);
+                    let n_text = lang.assets.diff_mines_label_fmt.replace("{}", &max_mines.to_string());
+                    let n_disp_w = n_text.width();
+                    let n_label = format!("{}{}", n_text, " ".repeat(label_width.saturating_sub(n_disp_w)));
                     let n_label_style = if is_flashing && ui.custom_invalid_field == Some((2, ui.custom_invalid_field.unwrap().1)) {
                         Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
                     } else {
@@ -459,9 +477,10 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                     // Row 1 = Width input, Row 3 = Height input, Row 5 = Mines input
                     let label_len = 20u16; // Fixed label width for alignment
                     let indent = 1u16; // One space indentation
-                    ui.custom_w_rect = Some(Rect::new(inner.x + indent + label_len, inner.y + 1, 3, 1));
-                    ui.custom_h_rect = Some(Rect::new(inner.x + indent + label_len, inner.y + 3, 3, 1));
-                    ui.custom_n_rect = Some(Rect::new(inner.x + indent + label_len, inner.y + 5, 3, 1));
+                    let input_x = inner.x + indent + label_len;
+                    ui.custom_w_rect = Some(Rect::new(input_x, inner.y + 1, 3, 1));
+                    ui.custom_h_rect = Some(Rect::new(input_x, inner.y + 3, 3, 1));
+                    ui.custom_n_rect = Some(Rect::new(input_x, inner.y + 5, 3, 1));
                 } else {
                     ui.custom_w_rect = None;
                     ui.custom_h_rect = None;
@@ -483,12 +502,12 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                         let (ww, hh, mn) = d.params();
                                         let idx = format!(" {} ", i + 1);
                                         // Build name field using display width so wide characters align
-                                        let name = d.name();
+                                        let name = lang.diff_name(i);
                                         let name_disp_w = name.width();
                                         let name_col_w = 14usize;
                                         let name_pad = name_col_w.saturating_sub(name_disp_w);
                                         let name_field = format!("{}{}", name, " ".repeat(name_pad));
-                                        let suffix = format!(") {} {:>2}x{:<2}  {} mines", name_field, ww, hh, mn);
+                                        let suffix = format!(") {} {:>2}x{:<2}  {} {}", name_field, ww, hh, mn, lang.assets.diff_mines_ncnt);
                                         let focus_style = Style::default().bg(menu_key_bg_hover).fg(menu_key_fg_pressed).add_modifier(Modifier::BOLD);
                                         if i == hover_index {
                                             let spans = Spans::from(vec![
@@ -513,12 +532,12 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                     let mark = if hover_index == 3 { "*" } else { " " };
                     let idx = " 4 ";
                     let (cw, ch, cn) = (cfg.custom_w, cfg.custom_h, cfg.custom_n);
-                    let name = Difficulty::names()[3];
+                    let name = lang.diff_names()[3];
                     let name_disp_w = name.width();
                     let name_col_w = 14usize;
                     let name_pad = name_col_w.saturating_sub(name_disp_w);
                     let name_field = format!("{}{}", name, " ".repeat(name_pad));
-                    let suffix = format!(") {} {:>2}x{:<2}  {} mines", name_field, cw, ch, cn);
+                    let suffix = format!(") {} {:>2}x{:<2}  {} {}", name_field, cw, ch, cn, lang.assets.diff_mines_ncnt);
                     let focus_style = Style::default().bg(menu_key_bg_hover).fg(menu_key_fg_pressed).add_modifier(Modifier::BOLD);
                     if hover_index == 3 {
                         let spans = Spans::from(vec![
@@ -555,12 +574,12 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                 if ui.modal_close_pressed { btn_style = Style::default().bg(Color::Green).fg(Color::Black).add_modifier(Modifier::BOLD); }
                 else if ui.modal_close_hovered { btn_style = Style::default().bg(Color::White).fg(Color::Black).add_modifier(Modifier::BOLD); }
                 
-                let btn_text = if ui.custom_input_mode.is_some() { " OK " } else { " CLOSE " };
+                let btn_text = if ui.custom_input_mode.is_some() { lang.assets.btn_ok } else { lang.assets.btn_close };
                 let btn = Paragraph::new(Spans::from(Span::styled(btn_text, btn_style))).alignment(Alignment::Center).block(Block::default());
                 f.render_widget(btn, btn_rect);
             }
             if ui.showing_options {
-                let mrect = centered_block(30,8, size);
+                let mrect = centered_block(30,10, size);
                 ui.modal_rect = Some(mrect);
                 f.render_widget(Clear, mrect);
                 f.render_widget(Block::default().borders(Borders::ALL).title(menu_items[4].1), mrect);
@@ -572,24 +591,37 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                 let focus0 = ui.options_focus == Some(0);
                 let focus1 = ui.options_focus == Some(1);
                 let focus2 = ui.options_focus == Some(2);
+                let focus3 = ui.options_focus == Some(3);
                 let focus_style = Style::default().bg(menu_key_bg_hover).fg(menu_key_fg_pressed).add_modifier(Modifier::BOLD);
+                
+                // Language display - show current language name
+                let lang_display = if lang.current_lang == "zh" { 
+                    format!("{}: {}", lang.assets.opt_language, lang.assets.lang_chinese)
+                } else {
+                    format!("{}: {}", lang.assets.opt_language, lang.assets.lang_english)
+                };
+                
                 lines.push(Spans::from(Span::raw("")));
-                lines.push(Spans::from(vec![Span::raw(" "), if focus0 { Span::styled(format!("{} Show indicator", cb0), focus_style) } else { Span::raw(format!("{} Show indicator", cb0)) }]));
-                lines.push(Spans::from(vec![Span::raw(" "), if focus1 { Span::styled(format!("{} Use ? marks", cb1), focus_style) } else { Span::raw(format!("{} Use ? marks", cb1)) }]));
-                lines.push(Spans::from(vec![Span::raw(" "), if focus2 { Span::styled(format!("{} ASCII icons", cb2), focus_style) } else { Span::raw(format!("{} ASCII icons", cb2)) }]));
+                lines.push(Spans::from(vec![Span::raw(" "), if focus0 { Span::styled(format!("{} {}", cb0, lang.assets.opt_show_indicator), focus_style) } else { Span::raw(format!("{} {}", cb0, lang.assets.opt_show_indicator)) }]));
+                lines.push(Spans::from(vec![Span::raw(" "), if focus1 { Span::styled(format!("{} {}", cb1, lang.assets.opt_use_question), focus_style) } else { Span::raw(format!("{} {}", cb1, lang.assets.opt_use_question)) }]));
+                lines.push(Spans::from(vec![Span::raw(" "), if focus2 { Span::styled(format!("{} {}", cb2, lang.assets.opt_ascii_icons), focus_style) } else { Span::raw(format!("{} {}", cb2, lang.assets.opt_ascii_icons)) }]));
+                lines.push(Spans::from(Span::raw("")));
+                lines.push(Spans::from(vec![Span::raw(" "), if focus3 { Span::styled(&lang_display, focus_style) } else { Span::raw(&lang_display) }]));
                 let p = Paragraph::new(Text::from(lines)).alignment(Alignment::Left);
                 f.render_widget(p, inner);
                 // checkbox rects for mouse interaction
                 // Only make the clickable area cover the visible label text, not the whole line
-                let label0 = format!("{} Show indicator", if ui.options_indicator { "[x]" } else { "[ ]" });
-                let label1 = format!("{} Use ? marks", if ui.options_use_q { "[x]" } else { "[ ]" });
-                let label2 = format!("{} Ascii icons", if ui.options_ascii { "[x]" } else { "[ ]" });
+                let label0 = format!("{} {}", if ui.options_indicator { "[x]" } else { "[ ]" }, lang.assets.opt_show_indicator);
+                let label1 = format!("{} {}", if ui.options_use_q { "[x]" } else { "[ ]" }, lang.assets.opt_use_question);
+                let label2 = format!("{} {}", if ui.options_ascii { "[x]" } else { "[ ]" }, lang.assets.opt_ascii_icons);
                 let w0 = label0.width() as u16;
                 let w1 = label1.width() as u16;
                 let w2 = label2.width() as u16;
+                let w3 = lang_display.width() as u16;
                 ui.options_indicator_rect = Some(Rect::new(inner.x + 1, inner.y + 1, w0, 1));
                 ui.options_use_q_rect = Some(Rect::new(inner.x + 1, inner.y + 2, w1, 1));
                 ui.options_ascii_rect = Some(Rect::new(inner.x + 1, inner.y + 3, w2, 1));
+                ui.options_lang_rect = Some(Rect::new(inner.x + 1, inner.y + 5, w3, 1));
                 // OK button
                 let btn_w = 5u16;
                 let bx = inner.x + (inner.width.saturating_sub(btn_w)) / 2;
@@ -599,7 +631,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                 let mut btn_style = Style::default().bg(Color::Gray).fg(Color::Black).add_modifier(Modifier::BOLD);
                 if ui.modal_close_pressed { btn_style = Style::default().bg(Color::Green).fg(Color::Black).add_modifier(Modifier::BOLD); }
                 else if ui.modal_close_hovered { btn_style = Style::default().bg(Color::White).fg(Color::Black).add_modifier(Modifier::BOLD); }
-                let btn = Paragraph::new(Spans::from(Span::styled(" OK ", btn_style))).alignment(Alignment::Center).block(Block::default());
+                let btn = Paragraph::new(Spans::from(Span::styled(lang.assets.btn_ok, btn_style))).alignment(Alignment::Center).block(Block::default());
                 f.render_widget(btn, btn_rect);
             }
 
@@ -611,9 +643,13 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                 let inner = Rect::new(mrect.x + 1, mrect.y + 1, mrect.width.saturating_sub(2), mrect.height.saturating_sub(2));
                 let lines = vec![
                     Spans::from(Span::raw("")),
-                    Spans::from(Span::raw(env!("CARGO_PKG_DESCRIPTION"))),
+                    Spans::from(Span::raw(lang.assets.about_description)),
                     Spans::from(Span::raw("")),
-                    Spans::from(Span::raw(format!("v{} by {}", env!("CARGO_PKG_VERSION"), env!("CARGO_PKG_AUTHORS")))),
+                    Spans::from(Span::raw(
+                        lang.assets.about_version_fmt
+                            .replacen("{}", env!("CARGO_PKG_VERSION"), 1)
+                            .replacen("{}", env!("CARGO_PKG_AUTHORS"), 1)
+                    )),
                 ];
                 let p = Paragraph::new(Text::from(lines)).alignment(Alignment::Center);
                 f.render_widget(p, inner);
@@ -626,7 +662,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                 let mut btn_style = Style::default().bg(Color::Gray).fg(Color::Black).add_modifier(Modifier::BOLD);
                 if ui.modal_close_pressed { btn_style = Style::default().bg(Color::Green).fg(Color::Black).add_modifier(Modifier::BOLD); }
                 else if ui.modal_close_hovered { btn_style = Style::default().bg(Color::White).fg(Color::Black).add_modifier(Modifier::BOLD); }
-                let btn = Paragraph::new(Spans::from(Span::styled(" CLOSE ", btn_style))).alignment(Alignment::Center).block(Block::default());
+                let btn = Paragraph::new(Spans::from(Span::styled(lang.assets.btn_close, btn_style))).alignment(Alignment::Center).block(Block::default());
                 f.render_widget(btn, btn_rect);
             }
 
@@ -638,11 +674,11 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                 let inner = Rect::new(mrect.x + 1, mrect.y + 1, mrect.width.saturating_sub(2), mrect.height.saturating_sub(2));
                 let help_lines = vec![
                     Spans::from(Span::raw("")),
-                    Spans::from(Span::raw(" Controls:")),
-                    Spans::from(Span::raw("  Mouse | Arrows    - move cursor")),
-                    Spans::from(Span::raw("  L-Click | Space   - reveal")),
-                    Spans::from(Span::raw("  R-Click | F       - toggle flag")),
-                    Spans::from(Span::raw("  L+R-Click | Enter - chord (open neighbors)")),
+                    Spans::from(Span::raw(lang.assets.help_controls)),
+                    Spans::from(Span::raw(lang.assets.help_move)),
+                    Spans::from(Span::raw(lang.assets.help_reveal)),
+                    Spans::from(Span::raw(lang.assets.help_flag)),
+                    Spans::from(Span::raw(lang.assets.help_chord)),
                 ];
                 let p = Paragraph::new(Text::from(help_lines)).alignment(Alignment::Left);
                 f.render_widget(p, inner);
@@ -655,7 +691,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                 let mut btn_style = Style::default().bg(Color::Gray).fg(Color::Black).add_modifier(Modifier::BOLD);
                 if ui.modal_close_pressed { btn_style = Style::default().bg(Color::Green).fg(Color::Black).add_modifier(Modifier::BOLD); }
                 else if ui.modal_close_hovered { btn_style = Style::default().bg(Color::White).fg(Color::Black).add_modifier(Modifier::BOLD); }
-                let btn = Paragraph::new(Spans::from(Span::styled(" CLOSE ", btn_style))).alignment(Alignment::Center).block(Block::default());
+                let btn = Paragraph::new(Spans::from(Span::styled(lang.assets.btn_close, btn_style))).alignment(Alignment::Center).block(Block::default());
                 f.render_widget(btn, btn_rect);
             }
 
@@ -663,8 +699,8 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                 let rb = centered_block(40,10, size);
                 ui.modal_rect = Some(rb);
                 f.render_widget(Clear, rb);
-                let mut rec_lines = vec![Spans::from(Span::raw("")), Spans::from(Span::raw(" Best time in seconds:"))];
-                let labels = &Difficulty::names()[0..3];
+                let mut rec_lines = vec![Spans::from(Span::raw("")), Spans::from(Span::raw(lang.assets.rec_best_time))];
+                let labels = &lang.diff_names()[0..3];
                 let label_max = labels.iter().map(|s| s.width()).max().unwrap_or(0);
                 let time_w = 5usize; // allow up to 5 digits for time
                 let r0 = cfg.get_record_detail(&Difficulty::Beginner);
@@ -692,11 +728,11 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                             };
                             s.push_str(&time_field);
                             s.push_str("  "); // two-space gap between time and date
-                            s.push_str(&date);
+                            s.push_str(&lang.format_date(&date));
                             Spans::from(Span::raw(s))
                         }
                         None => {
-                            let time_field = format!("{:>width$}", "-", width=time_w);
+                            let time_field = format!("{:>width$}", lang.assets.rec_no_record, width=time_w);
                             s.push_str(&time_field);
                             Spans::from(Span::raw(s))
                         }
@@ -716,7 +752,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                 let mut btn_style = Style::default().bg(Color::Gray).fg(Color::Black).add_modifier(Modifier::BOLD);
                 if ui.modal_close_pressed { btn_style = Style::default().bg(Color::Green).fg(Color::Black).add_modifier(Modifier::BOLD); }
                 else if ui.modal_close_hovered { btn_style = Style::default().bg(Color::White).fg(Color::Black).add_modifier(Modifier::BOLD); }
-                let btn = Paragraph::new(Spans::from(Span::styled(" CLOSE ", btn_style))).alignment(Alignment::Center).block(Block::default());
+                let btn = Paragraph::new(Spans::from(Span::styled(lang.assets.btn_close, btn_style))).alignment(Alignment::Center).block(Block::default());
                 f.render_widget(btn, btn_rect);
             }
 
@@ -724,7 +760,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                 let wb = bottom_centered_block(40,8, size);
                 ui.modal_rect = Some(wb);
                 f.render_widget(Clear, wb);
-                f.render_widget(Block::default().borders(Borders::ALL).title("Success"), wb);
+                f.render_widget(Block::default().borders(Borders::ALL).title(lang.assets.win_title), wb);
                 let inner = Rect::new(wb.x + 1, wb.y + 1, wb.width.saturating_sub(2), wb.height.saturating_sub(2));
                 let t = if game.started { game.start_time.unwrap().elapsed().as_secs() } else { game.elapsed.as_secs() };
                 // Use the last_run_new_record flag because the config may already
@@ -733,8 +769,8 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                 // Don't show "New Record!" for Custom difficulty since it's not stored
                 let is_custom = matches!(cfg.difficulty, Difficulty::Custom(_, _, _));
                 let is_new = ui.last_run_new_record && !is_custom;
-                let time_line = if is_new { format!("Time: {} seconds (New Record!)", t) } else { format!("Time: {} seconds", t) };
-                let lines = vec![Spans::from(Span::raw("")), Spans::from(Span::raw("Mines Cleared — You Win!")), Spans::from(Span::raw(time_line)) ];
+                let time_line = if is_new { lang.assets.win_time_record_fmt.replace("{}", &t.to_string()) } else { lang.assets.win_time_fmt.replace("{}", &t.to_string()) };
+                let lines = vec![Spans::from(Span::raw("")), Spans::from(Span::raw(lang.assets.win_message)), Spans::from(Span::raw(time_line)) ];
                 let p = Paragraph::new(Text::from(lines)).alignment(Alignment::Center);
                 f.render_widget(p, inner);
                 // close button
@@ -746,7 +782,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                 let mut btn_style = Style::default().bg(Color::Gray).fg(Color::Black).add_modifier(Modifier::BOLD);
                 if ui.modal_close_pressed { btn_style = Style::default().bg(Color::Green).fg(Color::Black).add_modifier(Modifier::BOLD); }
                 else if ui.modal_close_hovered { btn_style = Style::default().bg(Color::White).fg(Color::Black).add_modifier(Modifier::BOLD); }
-                let btn = Paragraph::new(Spans::from(Span::styled(" CLOSE ", btn_style))).alignment(Alignment::Center).block(Block::default());
+                let btn = Paragraph::new(Spans::from(Span::styled(lang.assets.btn_close, btn_style))).alignment(Alignment::Center).block(Block::default());
                 f.render_widget(btn, btn_rect);
             }
 
@@ -754,9 +790,9 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                 let lb = bottom_centered_block(44,8, size);
                 ui.modal_rect = Some(lb);
                 f.render_widget(Clear, lb);
-                f.render_widget(Block::default().borders(Borders::ALL).title("Failure"), lb);
+                f.render_widget(Block::default().borders(Borders::ALL).title(lang.assets.loss_title), lb);
                 let inner = Rect::new(lb.x + 1, lb.y + 1, lb.width.saturating_sub(2), lb.height.saturating_sub(2));
-                let lines = vec![Spans::from(Span::raw("")), Spans::from(Span::raw("Mine Exploded — You Lose!")), Spans::from(Span::raw("Better luck next time."))];
+                let lines = vec![Spans::from(Span::raw("")), Spans::from(Span::raw(lang.assets.loss_message)), Spans::from(Span::raw(lang.assets.loss_better_luck))];
                 let p = Paragraph::new(Text::from(lines)).alignment(Alignment::Center);
                 f.render_widget(p, inner);
                 // close button
@@ -768,7 +804,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                 let mut btn_style = Style::default().bg(Color::Gray).fg(Color::Black).add_modifier(Modifier::BOLD);
                 if ui.modal_close_pressed { btn_style = Style::default().bg(Color::Green).fg(Color::Black).add_modifier(Modifier::BOLD); }
                 else if ui.modal_close_hovered { btn_style = Style::default().bg(Color::White).fg(Color::Black).add_modifier(Modifier::BOLD); }
-                let btn = Paragraph::new(Spans::from(Span::styled(" CLOSE ", btn_style))).alignment(Alignment::Center).block(Block::default());
+                let btn = Paragraph::new(Spans::from(Span::styled(lang.assets.btn_close, btn_style))).alignment(Alignment::Center).block(Block::default());
                 f.render_widget(btn, btn_rect);
             }
         })?;
@@ -998,17 +1034,24 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                     }
                                     KeyCode::Up => {
                                         let f = ui.options_focus.unwrap_or(0);
-                                        ui.options_focus = Some(if f == 0 { 2 } else { f - 1 });
+                                        ui.options_focus = Some(if f == 0 { 3 } else { f - 1 });
                                     }
                                     KeyCode::Down => {
                                         let f = ui.options_focus.unwrap_or(0);
-                                        ui.options_focus = Some((f + 1) % 3);
+                                        ui.options_focus = Some((f + 1) % 4);
                                     }
                                     KeyCode::Char(' ') => {
                                         match ui.options_focus.unwrap_or(0) {
                                             0 => ui.options_indicator = !ui.options_indicator,
                                             1 => ui.options_use_q = !ui.options_use_q,
                                             2 => ui.options_ascii = !ui.options_ascii,
+                                            3 => {
+                                                // Toggle language between English and Chinese
+                                                let new_lang = if lang.current_lang == "zh" { "en" } else { "zh" };
+                                                lang.switch_to(new_lang);
+                                                cfg.language = lang.current_lang.clone();
+                                                save_config(&cfg);
+                                            }
                                             _ => {}
                                         }
                                     }
@@ -1084,12 +1127,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                         let (cx,cy) = game.cursor;
                                         let idx = game.index(cx,cy);
                                         if !game.revealed[idx] {
-                                            if cfg.use_question_marks {
-                                                game.toggle_flag(cx,cy);
-                                            } else {
-                                                // toggle between 0 and 1 only
-                                                if game.flagged[idx] == 1 { game.flagged[idx] = 0 } else { game.flagged[idx] = 1 }
-                                            }
+                                            game.toggle_flag(cx, cy, cfg.use_question_marks);
                                         }
                                     }
                                     _ => {}
@@ -1196,6 +1234,11 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                                 ui.options_focus = Some(2);
                                             }
                                         }
+                                        if let Some(rect) = ui.options_lang_rect {
+                                            if me.column >= rect.x && me.column <= rect.x + rect.width.saturating_sub(1) && me.row >= rect.y && me.row <= rect.y + rect.height.saturating_sub(1) {
+                                                ui.options_focus = Some(3);
+                                            }
+                                        }
                                         // Also allow hovering the whole line inside the modal to set focus
                                         if let Some(m) = ui.modal_rect {
                                             let inner = Rect::new(m.x + 1, m.y + 1, m.width.saturating_sub(2), m.height.saturating_sub(2));
@@ -1256,6 +1299,17 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                             if me.column >= rect.x && me.column <= rect.x + rect.width.saturating_sub(1) && me.row >= rect.y && me.row <= rect.y + rect.height.saturating_sub(1) {
                                                 ui.options_ascii = !ui.options_ascii;
                                                 ui.options_focus = Some(2);
+                                                continue;
+                                            }
+                                        }
+                                        if let Some(rect) = ui.options_lang_rect {
+                                            if me.column >= rect.x && me.column <= rect.x + rect.width.saturating_sub(1) && me.row >= rect.y && me.row <= rect.y + rect.height.saturating_sub(1) {
+                                                // Toggle language between English and Chinese
+                                                let new_lang = if lang.current_lang == "zh" { "en" } else { "zh" };
+                                                lang.switch_to(new_lang);
+                                                cfg.language = lang.current_lang.clone();
+                                                save_config(&cfg);
+                                                ui.options_focus = Some(3);
                                                 continue;
                                             }
                                         }
@@ -1715,10 +1769,8 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                                     if let Some((px,py)) = ui._right_press {
                                                         if px==cx && py==cy {
                                                             let idx = game.index(cx,cy);
-                                                            if cfg.use_question_marks {
-                                                                game.toggle_flag(cx,cy);
-                                                            } else {
-                                                                if game.flagged[idx] == 1 { game.flagged[idx] = 0 } else { game.flagged[idx] = 1 }
+                                                            if !game.revealed[idx] {
+                                                                game.toggle_flag(cx, cy, cfg.use_question_marks);
                                                             }
                                                         }
                                                     }
