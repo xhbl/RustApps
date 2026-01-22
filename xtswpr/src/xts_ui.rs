@@ -17,7 +17,7 @@ use unicode_width::UnicodeWidthStr;
 
 fn reset_ui_after_new_game(game: &mut Game, ui: &mut UiState) {
     ui.reset_after_new_game();
-    ui.mouse_arrow = Some(game.cursor);
+    ui.cursor_indicator = Some(game.cursor);
 }
 
 // Group runtime UI variables into a single structure to simplify passing them around
@@ -30,8 +30,8 @@ struct UiState {
     key_timer: Option<(Instant,u8)>,
     // runtime detection whether real key-release events are supported by the terminal
     supports_key_release: bool,
-    // fake arrow indicator position (cell coords) for TUI arrow cursor
-    mouse_arrow: Option<(usize,usize)>,
+    // cursor indicator position (cell coords) for TUI
+    cursor_indicator: Option<(usize,usize)>,
     flash_cell: Option<((usize,usize), Instant)>,
     clicked_index: Option<usize>,
     click_instant: Option<Instant>,
@@ -43,6 +43,11 @@ struct UiState {
     showing_difficulty: bool,
     showing_about: bool,
     showing_options: bool,
+    options_use_q: bool,
+    options_ascii: bool,
+    options_use_q_rect: Option<Rect>,
+    options_ascii_rect: Option<Rect>,
+    options_focus: Option<u8>,
     showing_help: bool,
     showing_record: bool,
     showing_win: bool,
@@ -78,6 +83,11 @@ impl UiState {
             showing_difficulty: false,
             showing_about: false,
             showing_options: false,
+            options_use_q: true,
+            options_ascii: false,
+            options_use_q_rect: None,
+            options_ascii_rect: None,
+            options_focus: None,
             showing_help: false,
             showing_record: false,
             showing_win: false,
@@ -96,7 +106,7 @@ impl UiState {
             custom_invalid_field: None,
             key_timer: None,
             supports_key_release: cfg!(windows),
-            mouse_arrow: None,
+            cursor_indicator: None,
         }
     }
 
@@ -116,6 +126,11 @@ impl UiState {
         self.showing_difficulty = false;
         self.showing_about = false;
         self.showing_options = false;
+        self.options_use_q = true;
+        self.options_ascii = false;
+        self.options_use_q_rect = None;
+        self.options_ascii_rect = None;
+        self.options_focus = None;
         self.showing_help = false;
         self.showing_record = false;
         self.showing_win = false;
@@ -124,7 +139,7 @@ impl UiState {
         self.custom_invalid_field = None;
         self.key_timer = None;
         self.supports_key_release = cfg!(windows);
-        self.mouse_arrow = None;
+        self.cursor_indicator = None;
     }
 }
 
@@ -140,7 +155,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
     let mut game = Game::new(w,h,mines);
     // grouped runtime UI state
     let mut ui = UiState::new();
-    ui.mouse_arrow = Some(game.cursor);
+    ui.cursor_indicator = Some(game.cursor);
     let mut menu_rect: Option<Rect> = None;
     let mut board_rect: Option<Rect> = None;
     let mut status_rect: Option<Rect> = None;
@@ -157,12 +172,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
     let mut difficulty_selected: usize = cfg.difficulty.to_index();
     let mut exit_requested: bool = false;
 
-    // Centralized glyph definitions: change characters/colors here to alter appearance globally
-    let not_win = false; /* !cfg!(target_os = "windows"); */
-    let glyph_unopened = (if not_win { "▪" } else { "■" }, Color::Gray.wtmatch());
-    let glyph_mine     = (if not_win { "*" } else { "☼" }, Color::Black.wtmatch());
-    let glyph_flag     = (if not_win { "F" } else { "⚑" }, Color::Red.wtmatch());
-    let glyph_question = ("?", Color::Red.wtmatch());
+    // Centralized glyph/color definitions are computed per-frame inside the draw closure
     // Background color for the minefield (change this variable to alter background)
     let board_bg = Color::DarkGray.wtmatch();
     // Cursor background color (centralized)
@@ -178,9 +188,9 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
     let menu_key_bg_hover = Color::LightBlue.wtmatch();
     let menu_key_bg_pressed = Color::Green.wtmatch();
     let menu_key_fg_pressed = Color::Black.wtmatch();
-    // fake arrow cursor appearance
-    let arrow_char = "▸";
-    let arrow_fg = Color::Yellow.wtmatch();
+    // cursor indicator appearance
+    let indicator_char = "▸";
+    let indicator_fg = Color::Yellow.wtmatch();
     // Number colors for revealed cells 1..8
     let num_colors: [Color; 8] = [
         Color::Blue.wtmatch(),
@@ -278,6 +288,12 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
             f.render_widget(status, chunks[2]);
             status_rect = Some(chunks[2]);
 
+            // Centralized glyph definitions: change characters/colors here to alter appearance globally
+            let glyph_unopened = (if cfg.ascii_icons { "▪" } else { "■" }, Color::Gray.wtmatch());
+            let glyph_mine     = (if cfg.ascii_icons { "*" } else { "☼" }, Color::Black.wtmatch());
+            let glyph_flag     = (if cfg.ascii_icons { "F" } else { "⚑" }, Color::Red.wtmatch());
+            let glyph_question = ("?", Color::Red.wtmatch());
+
             // board area
             let board_area = centered_block(((game.w * 2) as u16) + 3, (game.h as u16) + 2, chunks[1]);
             board_rect = Some(board_area);
@@ -321,10 +337,10 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                             style = style.bg(flash_bg).fg(flash_fg).add_modifier(flash_mod);
                         }
                     }
-                    // render fake arrow cursor if mouse is over this cell
-                    if ui.mouse_arrow == Some((x,y)) {
-                        let arrow_style = style.fg(arrow_fg).add_modifier(Modifier::BOLD);
-                        spans.push(Span::styled(arrow_char.to_string(), arrow_style));
+                    // render cursor indicator if mouse is over this cell
+                    if ui.cursor_indicator == Some((x,y)) {
+                        let indicator_style = style.fg(indicator_fg).add_modifier(Modifier::BOLD);
+                        spans.push(Span::styled(indicator_char.to_string(), indicator_style));
                         spans.push(Span::styled(format!("{}", s), style));
                     } else {
                         spans.push(Span::styled(format!(" {}", s), style));
@@ -343,7 +359,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
             if ui.showing_difficulty {
                 // If in custom input mode, show a larger dialog for input
                 if ui.custom_input_mode.is_some() {
-                    let mrect = centered_block(42, 10, size);
+                    let mrect = centered_block(42, 11, size);
                     ui.modal_rect = Some(mrect);
                     f.render_widget(Clear, mrect);
                     f.render_widget(Block::default().borders(Borders::ALL).title(format!("{} Difficulty", Difficulty::Custom(0,0,0).name())), mrect);
@@ -429,7 +445,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                     ui.custom_h_rect = None;
                     ui.custom_n_rect = None;
                     // Normal difficulty selection
-                    let mrect = centered_block(42, 10, size);
+                    let mrect = centered_block(42, 11, size);
                     ui.modal_rect = Some(mrect);
                     f.render_widget(Clear, mrect);
                     f.render_widget(Block::default().borders(Borders::ALL).title(menu_items[3].1), mrect);
@@ -498,17 +514,30 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                 f.render_widget(btn, btn_rect);
             }
             if ui.showing_options {
-                let mrect = centered_block(40,6, size);
+                let mrect = centered_block(40,7, size);
                 ui.modal_rect = Some(mrect);
                 f.render_widget(Clear, mrect);
                 f.render_widget(Block::default().borders(Borders::ALL).title(menu_items[4].1), mrect);
                 let inner = Rect::new(mrect.x + 1, mrect.y + 1, mrect.width.saturating_sub(2), mrect.height.saturating_sub(2));
-                let lines = vec![
-                    Spans::from(Span::raw("")),
-                    Spans::from(Span::raw("")),
-                ];
-                let p = Paragraph::new(Text::from(lines)).alignment(Alignment::Center);
+                let mut lines = vec![];
+                let cb1 = if ui.options_use_q { "[x]" } else { "[ ]" };
+                let cb2 = if ui.options_ascii { "[x]" } else { "[ ]" };
+                let focus0 = ui.options_focus == Some(0);
+                let focus1 = ui.options_focus == Some(1);
+                let focus_style = Style::default().bg(menu_key_bg_hover).fg(menu_key_fg_pressed).add_modifier(Modifier::BOLD);
+                lines.push(Spans::from(Span::raw("")));
+                lines.push(Spans::from(vec![Span::raw(" "), if focus0 { Span::styled(format!("{} Use ? marks", cb1), focus_style) } else { Span::raw(format!("{} Use ? marks", cb1)) }]));
+                lines.push(Spans::from(vec![Span::raw(" "), if focus1 { Span::styled(format!("{} ASCII icons", cb2), focus_style) } else { Span::raw(format!("{} ASCII icons", cb2)) }]));
+                let p = Paragraph::new(Text::from(lines)).alignment(Alignment::Left);
                 f.render_widget(p, inner);
+                // checkbox rects for mouse interaction
+                // Only make the clickable area cover the visible label text, not the whole line
+                let label1 = format!("{} Use ? marks", if ui.options_use_q { "[x]" } else { "[ ]" });
+                let label2 = format!("{} Ascii icons", if ui.options_ascii { "[x]" } else { "[ ]" });
+                let w1 = label1.width() as u16;
+                let w2 = label2.width() as u16;
+                ui.options_use_q_rect = Some(Rect::new(inner.x + 1, inner.y + 1, w1, 1));
+                ui.options_ascii_rect = Some(Rect::new(inner.x + 1, inner.y + 2, w2, 1));
                 // OK button
                 let btn_w = 5u16;
                 let bx = inner.x + (inner.width.saturating_sub(btn_w)) / 2;
@@ -523,7 +552,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
             }
 
             if ui.showing_about {
-                let mrect = centered_block(48,8, size);
+                let mrect = centered_block(48,9, size);
                 ui.modal_rect = Some(mrect);
                 f.render_widget(Clear, mrect);
                 f.render_widget(Block::default().borders(Borders::ALL).title(menu_items[5].1), mrect);
@@ -550,7 +579,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
             }
 
             if ui.showing_help {
-                let mrect = centered_block(50,10, size);
+                let mrect = centered_block(50,11, size);
                 ui.modal_rect = Some(mrect);
                 f.render_widget(Clear, mrect);
                 f.render_widget(Block::default().borders(Borders::ALL).title(menu_items[0].1), mrect);
@@ -579,7 +608,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
             }
 
             if ui.showing_record {
-                let rb = centered_block(40,9, size);
+                let rb = centered_block(40,10, size);
                 ui.modal_rect = Some(rb);
                 f.render_widget(Clear, rb);
                 let mut rec_lines = vec![Spans::from(Span::raw("")), Spans::from(Span::raw(" Best time in seconds:"))];
@@ -640,7 +669,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
             }
 
             if ui.showing_win {
-                let wb = bottom_centered_block(40,7, size);
+                let wb = bottom_centered_block(40,8, size);
                 ui.modal_rect = Some(wb);
                 f.render_widget(Clear, wb);
                 f.render_widget(Block::default().borders(Borders::ALL).title("Success"), wb);
@@ -670,7 +699,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
             }
 
             if ui.showing_loss {
-                let lb = bottom_centered_block(44,7, size);
+                let lb = bottom_centered_block(44,8, size);
                 ui.modal_rect = Some(lb);
                 f.render_widget(Clear, lb);
                 f.render_widget(Block::default().borders(Borders::ALL).title("Failure"), lb);
@@ -692,8 +721,8 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
             }
         })?;
 
-        // bind fake arrow to current logical cursor each frame so it's always synced
-        ui.mouse_arrow = Some(game.cursor);
+        // bind cursor indicator to current logical cursor each frame so it's always synced
+        ui.cursor_indicator = Some(game.cursor);
 
         // If no modal was rendered this frame, ensure close button state is cleared
         if ui.modal_rect.is_none() {
@@ -888,7 +917,32 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                             } else if ui.showing_about {
                                 match code { KeyCode::Esc => { ui.showing_about = false; ui.modal_rect = None; ui.modal_close_rect = None; ui.modal_close_pressed = false; ui.hover_index = None } _ => { ui.showing_about = false; ui.modal_rect = None; ui.modal_close_rect = None; ui.modal_close_pressed = false; ui.hover_index = None } }
                             } else if ui.showing_options {
-                                match code { KeyCode::Esc => { ui.showing_options = false; ui.modal_rect = None; ui.modal_close_rect = None; ui.modal_close_pressed = false; ui.hover_index = None } _ => { ui.showing_options = false; ui.modal_rect = None; ui.modal_close_rect = None; ui.modal_close_pressed = false; ui.hover_index = None } }
+                                match code {
+                                    KeyCode::Esc => { ui.showing_options = false; ui.modal_rect = None; ui.modal_close_rect = None; ui.modal_close_pressed = false; ui.hover_index = None; ui.options_focus = None },
+                                    KeyCode::Enter => {
+                                        cfg.use_question_marks = ui.options_use_q;
+                                        cfg.ascii_icons = ui.options_ascii;
+                                        save_config(&cfg);
+                                        ui.showing_options = false;
+                                        ui.modal_rect = None; ui.modal_close_rect = None; ui.modal_close_pressed = false; ui.hover_index = None; ui.options_focus = None
+                                    }
+                                    KeyCode::Up => {
+                                        let f = ui.options_focus.unwrap_or(0);
+                                        ui.options_focus = Some(if f == 0 { 1 } else { f - 1 });
+                                    }
+                                    KeyCode::Down => {
+                                        let f = ui.options_focus.unwrap_or(0);
+                                        ui.options_focus = Some((f + 1) % 2);
+                                    }
+                                    KeyCode::Char(' ') => {
+                                        match ui.options_focus.unwrap_or(0) {
+                                            0 => ui.options_use_q = !ui.options_use_q,
+                                            1 => ui.options_ascii = !ui.options_ascii,
+                                            _ => {}
+                                        }
+                                    }
+                                    _ => {}
+                                }
                             } else if ui.showing_help {
                                 match code { KeyCode::Esc => { ui.showing_help = false; ui.modal_rect = None; ui.modal_close_rect = None; ui.modal_close_pressed = false; ui.hover_index = None } _ => { ui.showing_help = false; ui.modal_rect = None; ui.modal_close_rect = None; ui.modal_close_pressed = false; ui.hover_index = None } }
                             } else if ui.showing_record {
@@ -935,13 +989,13 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                     KeyCode::F(2) => { let (w,h,m) = cfg.difficulty.params(); game = Game::new(w,h,m); reset_ui_after_new_game(&mut game, &mut ui); }
                                     KeyCode::F(4) => { ui.showing_record = true }
                                         KeyCode::F(5) => { if !ui.showing_difficulty { difficulty_selected = cfg.difficulty.to_index(); } ui.showing_difficulty = !ui.showing_difficulty }
-                                    KeyCode::F(7) => { ui.showing_options = true }
+                                        KeyCode::F(7) => { ui.options_use_q = cfg.use_question_marks; ui.options_ascii = cfg.ascii_icons; ui.options_focus = Some(0); ui.showing_options = true }
                                     KeyCode::F(9) => { ui.showing_about = true }
                                     KeyCode::Char('o') if modifiers.contains(KeyModifiers::CONTROL) => { if !ui.showing_difficulty { difficulty_selected = cfg.difficulty.to_index(); } ui.showing_difficulty = !ui.showing_difficulty }
-                                    KeyCode::Left => { game.step_cursor(-1,0); ui.mouse_arrow = Some(game.cursor); }
-                                    KeyCode::Right => { game.step_cursor(1,0); ui.mouse_arrow = Some(game.cursor); }
-                                    KeyCode::Up => { game.step_cursor(0,-1); ui.mouse_arrow = Some(game.cursor); }
-                                    KeyCode::Down => { game.step_cursor(0,1); ui.mouse_arrow = Some(game.cursor); }
+                                    KeyCode::Left => { game.step_cursor(-1,0); ui.cursor_indicator = Some(game.cursor); }
+                                    KeyCode::Right => { game.step_cursor(1,0); ui.cursor_indicator = Some(game.cursor); }
+                                    KeyCode::Up => { game.step_cursor(0,-1); ui.cursor_indicator = Some(game.cursor); }
+                                    KeyCode::Down => { game.step_cursor(0,1); ui.cursor_indicator = Some(game.cursor); }
                                     KeyCode::Char(' ') => {
                                         // Space press: emulate left-button down at current cursor
                                         ui.left_press = Some(game.cursor);
@@ -955,7 +1009,18 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                         ui.chord_active = Some(c);
                                         if !ui.supports_key_release { ui.key_timer = Some((Instant::now(), 1)); }
                                     }
-                                    KeyCode::Char('f') | KeyCode::Char('F') => { game.toggle_flag(game.cursor.0, game.cursor.1) }
+                                    KeyCode::Char('f') | KeyCode::Char('F') => {
+                                        let (cx,cy) = game.cursor;
+                                        let idx = game.index(cx,cy);
+                                        if !game.revealed[idx] {
+                                            if cfg.use_question_marks {
+                                                game.toggle_flag(cx,cy);
+                                            } else {
+                                                // toggle between 0 and 1 only
+                                                if game.flagged[idx] == 1 { game.flagged[idx] = 0 } else { game.flagged[idx] = 1 }
+                                            }
+                                        }
+                                    }
                                     _ => {}
                                 }
                             }
@@ -1039,6 +1104,18 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                     if let Some(btn) = ui.modal_close_rect {
                                         let in_btn = me.column >= btn.x && me.column <= btn.x + btn.width.saturating_sub(1) && me.row >= btn.y && me.row <= btn.y + btn.height.saturating_sub(1);
                                         ui.modal_close_hovered = in_btn;
+                                    } else if ui.showing_options {
+                                        // Options modal: update focus on hover (no toggle here)
+                                        if let Some(rect) = ui.options_use_q_rect {
+                                            if me.column >= rect.x && me.column <= rect.x + rect.width.saturating_sub(1) && me.row >= rect.y && me.row <= rect.y + rect.height.saturating_sub(1) {
+                                                ui.options_focus = Some(0);
+                                            }
+                                        }
+                                        if let Some(rect) = ui.options_ascii_rect {
+                                            if me.column >= rect.x && me.column <= rect.x + rect.width.saturating_sub(1) && me.row >= rect.y && me.row <= rect.y + rect.height.saturating_sub(1) {
+                                                ui.options_focus = Some(1);
+                                            }
+                                        }
                                     } else {
                                         ui.modal_close_hovered = false;
                                     }
@@ -1066,6 +1143,24 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                         }
                                     }
                                     // click inside modal: handle custom input mode or difficulty selection
+                                    // Options modal click handling
+                                    if ui.showing_options {
+                                        if let Some(rect) = ui.options_use_q_rect {
+                                            if me.column >= rect.x && me.column <= rect.x + rect.width.saturating_sub(1) && me.row >= rect.y && me.row <= rect.y + rect.height.saturating_sub(1) {
+                                                ui.options_use_q = !ui.options_use_q;
+                                                ui.options_focus = Some(0);
+                                                continue;
+                                            }
+                                        }
+                                        if let Some(rect) = ui.options_ascii_rect {
+                                            if me.column >= rect.x && me.column <= rect.x + rect.width.saturating_sub(1) && me.row >= rect.y && me.row <= rect.y + rect.height.saturating_sub(1) {
+                                                ui.options_ascii = !ui.options_ascii;
+                                                ui.options_focus = Some(1);
+                                                continue;
+                                            }
+                                        }
+                                    }
+
                                     if ui.showing_difficulty {
                                         // Handle custom input mode mouse clicks
                                         if ui.custom_input_mode.is_some() {
@@ -1176,24 +1271,35 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                                     }
                                                 }
                                             } else {
-                                                // CLOSE button in difficulty/other modals
-                                                let was_win = ui.showing_win;
-                                                let was_loss = ui.showing_loss;
-                                                ui.showing_difficulty = false;
-                                                ui.showing_about = false;
-                                                ui.showing_options = false;
-                                                ui.showing_help = false;
-                                                ui.showing_record = false;
-                                                ui.showing_win = false;
-                                                ui.showing_loss = false;
-                                                // clear modal geometry immediately so following mouse events are not treated as inside modal
-                                                ui.modal_rect = None;
-                                                ui.modal_close_rect = None;
-                                                ui.hover_index = None;
-                                                if was_win || was_loss {
-                                                    let (ww,hh,mm) = cfg.difficulty.params();
-                                                    game = Game::new(ww, hh, mm);
-                                                    reset_ui_after_new_game(&mut game, &mut ui);
+                                                // CLOSE/OK button in difficulty/other modals
+                                                if ui.showing_options {
+                                                    // apply option changes
+                                                    cfg.use_question_marks = ui.options_use_q;
+                                                    cfg.ascii_icons = ui.options_ascii;
+                                                    save_config(&cfg);
+                                                    ui.showing_options = false;
+                                                    ui.modal_rect = None;
+                                                    ui.modal_close_rect = None;
+                                                    ui.hover_index = None;
+                                                } else {
+                                                    // CLOSE button in difficulty/other modals
+                                                    let was_win = ui.showing_win;
+                                                    let was_loss = ui.showing_loss;
+                                                    ui.showing_difficulty = false;
+                                                    ui.showing_about = false;
+                                                    ui.showing_help = false;
+                                                    ui.showing_record = false;
+                                                    ui.showing_win = false;
+                                                    ui.showing_loss = false;
+                                                    // clear modal geometry immediately so following mouse events are not treated as inside modal
+                                                    ui.modal_rect = None;
+                                                    ui.modal_close_rect = None;
+                                                    ui.hover_index = None;
+                                                    if was_win || was_loss {
+                                                        let (ww,hh,mm) = cfg.difficulty.params();
+                                                        game = Game::new(ww, hh, mm);
+                                                        reset_ui_after_new_game(&mut game, &mut ui);
+                                                    }
                                                 }
                                             }
                                         }
@@ -1258,8 +1364,8 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                             offset = end + 1;
                                         }
                                         ui.hover_index = found;
-                                        // when over menu, clear board arrow
-                                        ui.mouse_arrow = None;
+                                        // when over menu, clear board indicator
+                                        ui.cursor_indicator = None;
                                         true
                                     }
                                     MouseEventKind::Down(MouseButton::Left) => {
@@ -1278,7 +1384,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                                     1 => { let (w,h,m) = cfg.difficulty.params(); game = Game::new(w,h,m); reset_ui_after_new_game(&mut game, &mut ui); },
                                                     2 => ui.showing_record = true,
                                                     3 => { if !ui.showing_difficulty { difficulty_selected = cfg.difficulty.to_index(); } ui.showing_difficulty = true },
-                                                    4 => ui.showing_options = true,
+                                                    4 => { ui.options_use_q = cfg.use_question_marks; ui.options_ascii = cfg.ascii_icons; ui.options_focus = Some(0); ui.showing_options = true },
                                                     5 => ui.showing_about = true,
                                                     _ => {}
                                                 }
@@ -1351,7 +1457,7 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                             let cy = (me.row - inner.y) as usize;
                                             if cx < game.w && cy < game.h {
                                                 game.cursor = (cx, cy);
-                                                ui.mouse_arrow = Some((cx, cy));
+                                                ui.cursor_indicator = Some((cx, cy));
                                             }
                                         }
                                     }
@@ -1501,7 +1607,12 @@ pub fn run(cfg: &mut Config) -> Result<(), Box<dyn Error>> {
                                                 if cx < game.w && cy < game.h {
                                                     if let Some((px,py)) = ui._right_press {
                                                         if px==cx && py==cy {
-                                                            game.toggle_flag(cx,cy);
+                                                            let idx = game.index(cx,cy);
+                                                            if cfg.use_question_marks {
+                                                                game.toggle_flag(cx,cy);
+                                                            } else {
+                                                                if game.flagged[idx] == 1 { game.flagged[idx] = 0 } else { game.flagged[idx] = 1 }
+                                                            }
                                                         }
                                                     }
                                                 }

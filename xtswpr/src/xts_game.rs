@@ -100,10 +100,12 @@ pub struct Config {
     pub custom_w: usize,
     pub custom_h: usize,
     pub custom_n: usize,
+    pub use_question_marks: bool,
+    pub ascii_icons: bool,
 }
 
 impl Default for Config {
-    fn default() -> Self { Config { difficulty: Difficulty::Beginner, best_beginner: None, best_intermediate: None, best_expert: None, custom_w: 36, custom_h: 20, custom_n: 150 } }
+    fn default() -> Self { Config { difficulty: Difficulty::Beginner, best_beginner: None, best_intermediate: None, best_expert: None, custom_w: 36, custom_h: 20, custom_n: 150, use_question_marks: true, ascii_icons: false } }
 }
 
 impl Config {
