@@ -18,7 +18,7 @@ use std::error::Error;
 use std::io;
 use std::time::{Duration, Instant};
 
-use crate::xts_color::WTMatch;
+use crate::xts_color::ColorPalette;
 use crate::xts_game::{Config, Difficulty, Game, save_config};
 use crate::xts_lang::Lang;
 use unicode_width::UnicodeWidthStr;
@@ -170,6 +170,9 @@ impl UiState {
 pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
     let (w, h, mines) = cfg.difficulty.params();
 
+    // Initialize color palette once for better performance
+    let colors = ColorPalette::new();
+
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnableMouseCapture, terminal::EnterAlternateScreen)?;
@@ -192,10 +195,10 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
     // Glyph computation helper: compute glyphs based on ascii_icons setting.
     let make_glyphs = |ascii: bool| {
         (
-            (if ascii { "▪" } else { "■" }, Color::Gray.wtmatch()),
-            (if ascii { "*" } else { "☼" }, Color::Black.wtmatch()),
-            (if ascii { "F" } else { "⚑" }, Color::Red.wtmatch()),
-            ("?", Color::Red.wtmatch()),
+            (if ascii { "▪" } else { "■" }, colors.gray),
+            (if ascii { "*" } else { "☼" }, colors.black),
+            (if ascii { "F" } else { "⚑" }, colors.red),
+            ("?", colors.red),
         )
     };
 
@@ -208,33 +211,33 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
 
     // Centralized glyph/color definitions are computed per-frame inside the draw closure
     // Background color for the minefield (change this variable to alter background)
-    let board_bg = Color::DarkGray.wtmatch();
+    let board_bg = colors.dark_gray;
     // Cursor background color (centralized)
-    let cursor_bg = Color::LightBlue.wtmatch();
+    let cursor_bg = colors.light_blue;
     // Background color for neighbor highlight / reveal press
-    let reveal_bg = Color::DarkGray.wtmatch();
+    let reveal_bg = colors.dark_gray;
     // Flash (warning) colors when chord fails
-    let flash_bg = Color::Red.wtmatch();
-    let flash_fg = Color::White.wtmatch();
+    let flash_bg = colors.red;
+    let flash_fg = colors.white;
     let flash_mod = Modifier::BOLD;
     // Menu / key label colors (centralized)
-    let menu_key_fg = Color::Yellow.wtmatch();
-    let menu_key_bg_hover = Color::LightBlue.wtmatch();
-    let menu_key_bg_pressed = Color::Green.wtmatch();
-    let menu_key_fg_pressed = Color::Black.wtmatch();
+    let menu_key_fg = colors.yellow;
+    let menu_key_bg_hover = colors.light_blue;
+    let menu_key_bg_pressed = colors.green;
+    let menu_key_fg_pressed = colors.black;
     // cursor indicator appearance
     let indicator_char = "▸";
-    let indicator_fg = Color::Yellow.wtmatch();
+    let indicator_fg = colors.yellow;
     // Number colors for revealed cells 1..8
     let num_colors: [Color; 8] = [
-        Color::Blue.wtmatch(),
-        Color::Blue.wtmatch(),
-        Color::Blue.wtmatch(),
-        Color::Blue.wtmatch(),
-        Color::Blue.wtmatch(),
-        Color::Blue.wtmatch(),
-        Color::Blue.wtmatch(),
-        Color::Blue.wtmatch(),
+        colors.blue,
+        colors.blue,
+        colors.blue,
+        colors.blue,
+        colors.blue,
+        colors.blue,
+        colors.blue,
+        colors.blue,
     ];
 
     let tick_rate = Duration::from_millis(200);
@@ -410,7 +413,7 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
 
             // board area
             let board_area =
-                centered_block(((game.w * 2) as u16) + 3, (game.h as u16) + 2, chunks[1]);
+                center_rect(((game.w * 2) as u16) + 3, (game.h as u16) + 2, chunks[1]);
             board_rect = Some(board_area);
             let mut lines = vec![];
             for y in 0..game.h {
@@ -495,7 +498,7 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
             if ui.showing_difficulty {
                 // If in custom input mode, show a larger dialog for input
                 if ui.custom_input_mode.is_some() {
-                    let mrect = centered_block(42, 10, size);
+                    let mrect = center_rect(42, 10, size);
                     ui.modal_rect = Some(mrect);
                     f.render_widget(Clear, mrect);
                     f.render_widget(
@@ -504,12 +507,7 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                             .title(format!("{} {}", lang.assets.diff_custom, menu_items[3].1)),
                         mrect,
                     );
-                    let inner = Rect::new(
-                        mrect.x + 1,
-                        mrect.y + 1,
-                        mrect.width.saturating_sub(2),
-                        mrect.height.saturating_sub(2),
-                    );
+                    let inner = inner_rect(mrect);
 
                     // Calculate max mines based on current W and H input
                     let w_val = ui.custom_w_str.trim().parse::<usize>().unwrap_or(0);
@@ -534,9 +532,9 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
 
                     // Width row - label and input on same line
                     let w_style = if ui.custom_input_mode == Some(0) {
-                        Style::default().bg(Color::Yellow).fg(Color::Black)
+                        Style::default().bg(colors.yellow).fg(colors.black)
                     } else {
-                        Style::default().bg(Color::DarkGray)
+                        Style::default().bg(colors.dark_gray)
                     };
                     let w_text = lang.assets.diff_width_label;
                     let w_disp_w = w_text.width();
@@ -548,7 +546,7 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                     let w_label_style = if is_flashing
                         && ui.custom_invalid_field == Some((0, ui.custom_invalid_field.unwrap().1))
                     {
-                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+                        Style::default().fg(colors.red).add_modifier(Modifier::BOLD)
                     } else {
                         Style::default()
                     };
@@ -562,9 +560,9 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
 
                     // Height row - label and input on same line
                     let h_style = if ui.custom_input_mode == Some(1) {
-                        Style::default().bg(Color::Yellow).fg(Color::Black)
+                        Style::default().bg(colors.yellow).fg(colors.black)
                     } else {
-                        Style::default().bg(Color::DarkGray)
+                        Style::default().bg(colors.dark_gray)
                     };
                     let h_text = lang.assets.diff_height_label;
                     let h_disp_w = h_text.width();
@@ -576,7 +574,7 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                     let h_label_style = if is_flashing
                         && ui.custom_invalid_field == Some((1, ui.custom_invalid_field.unwrap().1))
                     {
-                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+                        Style::default().fg(colors.red).add_modifier(Modifier::BOLD)
                     } else {
                         Style::default()
                     };
@@ -590,9 +588,9 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
 
                     // Mines row - label shows actual max value and input on same line
                     let n_style = if ui.custom_input_mode == Some(2) {
-                        Style::default().bg(Color::Yellow).fg(Color::Black)
+                        Style::default().bg(colors.yellow).fg(colors.black)
                     } else {
-                        Style::default().bg(Color::DarkGray)
+                        Style::default().bg(colors.dark_gray)
                     };
                     let n_text = lang
                         .assets
@@ -607,7 +605,7 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                     let n_label_style = if is_flashing
                         && ui.custom_invalid_field == Some((2, ui.custom_invalid_field.unwrap().1))
                     {
-                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+                        Style::default().fg(colors.red).add_modifier(Modifier::BOLD)
                     } else {
                         Style::default()
                     };
@@ -635,7 +633,7 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                     ui.custom_h_rect = None;
                     ui.custom_n_rect = None;
                     // Normal difficulty selection
-                    let mrect = centered_block(42, 10, size);
+                    let mrect = center_rect(42, 10, size);
                     ui.modal_rect = Some(mrect);
                     f.render_widget(Clear, mrect);
                     f.render_widget(
@@ -644,12 +642,7 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                             .title(menu_items[3].1),
                         mrect,
                     );
-                    let inner = Rect::new(
-                        mrect.x + 1,
-                        mrect.y + 1,
-                        mrect.width.saturating_sub(2),
-                        mrect.height.saturating_sub(2),
-                    );
+                    let inner = inner_rect(mrect);
                     let mut lines = vec![Spans::from(Span::raw(""))];
 
                     // Pre-defined difficulties
@@ -691,7 +684,7 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                         } else {
                             let mark_style = if i == difficulty_selected {
                                 Style::default()
-                                    .fg(Color::Yellow)
+                                    .fg(colors.yellow)
                                     .add_modifier(Modifier::BOLD)
                             } else {
                                 Style::default()
@@ -733,7 +726,7 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                     } else {
                         let mark_style = if difficulty_selected == 3 {
                             Style::default()
-                                .fg(Color::Yellow)
+                                .fg(colors.yellow)
                                 .add_modifier(Modifier::BOLD)
                         } else {
                             Style::default()
@@ -757,37 +750,20 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                 } else {
                     lang.assets.btn_close
                 };
-                let btn_w = btn_text.width() as u16;
                 let mrect = ui.modal_rect.unwrap();
-                let bx = mrect.x + (mrect.width.saturating_sub(btn_w)) / 2;
-                let by = mrect.y + mrect.height.saturating_sub(2); // Position button at last row before bottom border
-                let btn_rect = Rect::new(bx, by, btn_w, 1);
+                let btn_rect = render_modal_button(
+                    f,
+                    btn_text,
+                    mrect,
+                    2, // Position button at last row before bottom border
+                    ui.modal_close_hovered,
+                    ui.modal_close_pressed,
+                    &colors,
+                );
                 ui.modal_close_rect = Some(btn_rect);
-
-                let mut btn_style = Style::default()
-                    .bg(Color::Gray)
-                    .fg(Color::Black)
-                    .add_modifier(Modifier::BOLD);
-
-                if ui.modal_close_pressed {
-                    btn_style = Style::default()
-                        .bg(Color::Green)
-                        .fg(Color::Black)
-                        .add_modifier(Modifier::BOLD);
-                } else if ui.modal_close_hovered {
-                    btn_style = Style::default()
-                        .bg(Color::White)
-                        .fg(Color::Black)
-                        .add_modifier(Modifier::BOLD);
-                }
-
-                let btn = Paragraph::new(Spans::from(Span::styled(btn_text, btn_style)))
-                    .alignment(Alignment::Center)
-                    .block(Block::default());
-                f.render_widget(btn, btn_rect);
             }
             if ui.showing_options {
-                let mrect = centered_block(30, 10, size);
+                let mrect = center_rect(30, 10, size);
                 ui.modal_rect = Some(mrect);
                 f.render_widget(Clear, mrect);
                 f.render_widget(
@@ -796,12 +772,7 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                         .title(menu_items[4].1),
                     mrect,
                 );
-                let inner = Rect::new(
-                    mrect.x + 1,
-                    mrect.y + 1,
-                    mrect.width.saturating_sub(2),
-                    mrect.height.saturating_sub(2),
-                );
+                let inner = inner_rect(mrect);
                 let mut lines = vec![];
                 let cb0 = if ui.options_indicator { "[x]" } else { "[ ]" };
                 let cb1 = if ui.options_use_q { "[x]" } else { "[ ]" };
@@ -893,34 +864,20 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                 ui.options_ascii_rect = Some(Rect::new(inner.x + 1, inner.y + 3, w2, 1));
                 ui.options_lang_rect = Some(Rect::new(inner.x + 1, inner.y + 5, w3, 1));
                 // OK button
-                let btn_w = lang.assets.btn_ok.width() as u16;
-                let bx = inner.x + (inner.width.saturating_sub(btn_w)) / 2;
-                let by = inner.y + inner.height.saturating_sub(1);
-                let btn_rect = Rect::new(bx, by, btn_w, 1);
+                let btn_rect = render_modal_button(
+                    f,
+                    lang.assets.btn_ok,
+                    inner,
+                    1,
+                    ui.modal_close_hovered,
+                    ui.modal_close_pressed,
+                    &colors,
+                );
                 ui.modal_close_rect = Some(btn_rect);
-                let mut btn_style = Style::default()
-                    .bg(Color::Gray)
-                    .fg(Color::Black)
-                    .add_modifier(Modifier::BOLD);
-                if ui.modal_close_pressed {
-                    btn_style = Style::default()
-                        .bg(Color::Green)
-                        .fg(Color::Black)
-                        .add_modifier(Modifier::BOLD);
-                } else if ui.modal_close_hovered {
-                    btn_style = Style::default()
-                        .bg(Color::White)
-                        .fg(Color::Black)
-                        .add_modifier(Modifier::BOLD);
-                }
-                let btn = Paragraph::new(Spans::from(Span::styled(lang.assets.btn_ok, btn_style)))
-                    .alignment(Alignment::Center)
-                    .block(Block::default());
-                f.render_widget(btn, btn_rect);
             }
 
             if ui.showing_about {
-                let mrect = centered_block(48, 9, size);
+                let mrect = center_rect(48, 9, size);
                 ui.modal_rect = Some(mrect);
                 f.render_widget(Clear, mrect);
                 f.render_widget(
@@ -929,12 +886,7 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                         .title(menu_items[5].1),
                     mrect,
                 );
-                let inner = Rect::new(
-                    mrect.x + 1,
-                    mrect.y + 1,
-                    mrect.width.saturating_sub(2),
-                    mrect.height.saturating_sub(2),
-                );
+                let inner = inner_rect(mrect);
                 let lines = vec![
                     Spans::from(Span::raw("")),
                     Spans::from(Span::raw(lang.assets.about_description)),
@@ -949,35 +901,20 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                 let p = Paragraph::new(Text::from(lines)).alignment(Alignment::Center);
                 f.render_widget(p, inner);
                 // close button
-                let btn_w = lang.assets.btn_close.width() as u16;
-                let bx = inner.x + (inner.width.saturating_sub(btn_w)) / 2;
-                let by = inner.y + inner.height.saturating_sub(1);
-                let btn_rect = Rect::new(bx, by, btn_w, 1);
+                let btn_rect = render_modal_button(
+                    f,
+                    lang.assets.btn_close,
+                    inner,
+                    1,
+                    ui.modal_close_hovered,
+                    ui.modal_close_pressed,
+                    &colors,
+                );
                 ui.modal_close_rect = Some(btn_rect);
-                let mut btn_style = Style::default()
-                    .bg(Color::Gray)
-                    .fg(Color::Black)
-                    .add_modifier(Modifier::BOLD);
-                if ui.modal_close_pressed {
-                    btn_style = Style::default()
-                        .bg(Color::Green)
-                        .fg(Color::Black)
-                        .add_modifier(Modifier::BOLD);
-                } else if ui.modal_close_hovered {
-                    btn_style = Style::default()
-                        .bg(Color::White)
-                        .fg(Color::Black)
-                        .add_modifier(Modifier::BOLD);
-                }
-                let btn =
-                    Paragraph::new(Spans::from(Span::styled(lang.assets.btn_close, btn_style)))
-                        .alignment(Alignment::Center)
-                        .block(Block::default());
-                f.render_widget(btn, btn_rect);
             }
 
             if ui.showing_help {
-                let mrect = centered_block(50, 11, size);
+                let mrect = center_rect(50, 11, size);
                 ui.modal_rect = Some(mrect);
                 f.render_widget(Clear, mrect);
                 f.render_widget(
@@ -986,12 +923,7 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                         .title(menu_items[0].1),
                     mrect,
                 );
-                let inner = Rect::new(
-                    mrect.x + 1,
-                    mrect.y + 1,
-                    mrect.width.saturating_sub(2),
-                    mrect.height.saturating_sub(2),
-                );
+                let inner = inner_rect(mrect);
                 let help_lines = vec![
                     Spans::from(Span::raw("")),
                     Spans::from(Span::raw(lang.assets.help_controls)),
@@ -1003,35 +935,20 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                 let p = Paragraph::new(Text::from(help_lines)).alignment(Alignment::Left);
                 f.render_widget(p, inner);
                 // close button
-                let btn_w = lang.assets.btn_close.width() as u16;
-                let bx = inner.x + (inner.width.saturating_sub(btn_w)) / 2;
-                let by = inner.y + inner.height.saturating_sub(1);
-                let btn_rect = Rect::new(bx, by, btn_w, 1);
+                let btn_rect = render_modal_button(
+                    f,
+                    lang.assets.btn_close,
+                    inner,
+                    1,
+                    ui.modal_close_hovered,
+                    ui.modal_close_pressed,
+                    &colors,
+                );
                 ui.modal_close_rect = Some(btn_rect);
-                let mut btn_style = Style::default()
-                    .bg(Color::Gray)
-                    .fg(Color::Black)
-                    .add_modifier(Modifier::BOLD);
-                if ui.modal_close_pressed {
-                    btn_style = Style::default()
-                        .bg(Color::Green)
-                        .fg(Color::Black)
-                        .add_modifier(Modifier::BOLD);
-                } else if ui.modal_close_hovered {
-                    btn_style = Style::default()
-                        .bg(Color::White)
-                        .fg(Color::Black)
-                        .add_modifier(Modifier::BOLD);
-                }
-                let btn =
-                    Paragraph::new(Spans::from(Span::styled(lang.assets.btn_close, btn_style)))
-                        .alignment(Alignment::Center)
-                        .block(Block::default());
-                f.render_widget(btn, btn_rect);
             }
 
             if ui.showing_record {
-                let rb = centered_block(40, 10, size);
+                let rb = center_rect(40, 10, size);
                 ui.modal_rect = Some(rb);
                 f.render_widget(Clear, rb);
                 let mut rec_lines = vec![
@@ -1089,31 +1006,16 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                     .alignment(Alignment::Left);
                 f.render_widget(p, rb);
                 // close button
-                let btn_w = lang.assets.btn_close.width() as u16;
-                let bx = rb.x + (rb.width.saturating_sub(btn_w)) / 2;
-                let by = rb.y + rb.height.saturating_sub(2);
-                let btn_rect = Rect::new(bx, by, btn_w, 1);
+                let btn_rect = render_modal_button(
+                    f,
+                    lang.assets.btn_close,
+                    rb,
+                    2,
+                    ui.modal_close_hovered,
+                    ui.modal_close_pressed,
+                    &colors,
+                );
                 ui.modal_close_rect = Some(btn_rect);
-                let mut btn_style = Style::default()
-                    .bg(Color::Gray)
-                    .fg(Color::Black)
-                    .add_modifier(Modifier::BOLD);
-                if ui.modal_close_pressed {
-                    btn_style = Style::default()
-                        .bg(Color::Green)
-                        .fg(Color::Black)
-                        .add_modifier(Modifier::BOLD);
-                } else if ui.modal_close_hovered {
-                    btn_style = Style::default()
-                        .bg(Color::White)
-                        .fg(Color::Black)
-                        .add_modifier(Modifier::BOLD);
-                }
-                let btn =
-                    Paragraph::new(Spans::from(Span::styled(lang.assets.btn_close, btn_style)))
-                        .alignment(Alignment::Center)
-                        .block(Block::default());
-                f.render_widget(btn, btn_rect);
             }
 
             if ui.showing_win {
@@ -1126,12 +1028,7 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                         .title(lang.assets.win_title),
                     wb,
                 );
-                let inner = Rect::new(
-                    wb.x + 1,
-                    wb.y + 1,
-                    wb.width.saturating_sub(2),
-                    wb.height.saturating_sub(2),
-                );
+                let inner = inner_rect(wb);
                 let t = if game.started {
                     game.start_time.unwrap().elapsed().as_secs()
                 } else {
@@ -1158,31 +1055,16 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                 let p = Paragraph::new(Text::from(lines)).alignment(Alignment::Center);
                 f.render_widget(p, inner);
                 // close button
-                let btn_w = lang.assets.btn_close.width() as u16;
-                let bx = inner.x + (inner.width.saturating_sub(btn_w)) / 2;
-                let by = inner.y + inner.height.saturating_sub(1);
-                let btn_rect = Rect::new(bx, by, btn_w, 1);
+                let btn_rect = render_modal_button(
+                    f,
+                    lang.assets.btn_close,
+                    inner,
+                    1,
+                    ui.modal_close_hovered,
+                    ui.modal_close_pressed,
+                    &colors,
+                );
                 ui.modal_close_rect = Some(btn_rect);
-                let mut btn_style = Style::default()
-                    .bg(Color::Gray)
-                    .fg(Color::Black)
-                    .add_modifier(Modifier::BOLD);
-                if ui.modal_close_pressed {
-                    btn_style = Style::default()
-                        .bg(Color::Green)
-                        .fg(Color::Black)
-                        .add_modifier(Modifier::BOLD);
-                } else if ui.modal_close_hovered {
-                    btn_style = Style::default()
-                        .bg(Color::White)
-                        .fg(Color::Black)
-                        .add_modifier(Modifier::BOLD);
-                }
-                let btn =
-                    Paragraph::new(Spans::from(Span::styled(lang.assets.btn_close, btn_style)))
-                        .alignment(Alignment::Center)
-                        .block(Block::default());
-                f.render_widget(btn, btn_rect);
             }
 
             if ui.showing_loss {
@@ -1195,12 +1077,7 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                         .title(lang.assets.loss_title),
                     lb,
                 );
-                let inner = Rect::new(
-                    lb.x + 1,
-                    lb.y + 1,
-                    lb.width.saturating_sub(2),
-                    lb.height.saturating_sub(2),
-                );
+                let inner = inner_rect(lb);
                 let lines = vec![
                     Spans::from(Span::raw("")),
                     Spans::from(Span::raw(lang.assets.loss_message)),
@@ -1209,31 +1086,16 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                 let p = Paragraph::new(Text::from(lines)).alignment(Alignment::Center);
                 f.render_widget(p, inner);
                 // close button
-                let btn_w = lang.assets.btn_close.width() as u16;
-                let bx = inner.x + (inner.width.saturating_sub(btn_w)) / 2;
-                let by = inner.y + inner.height.saturating_sub(1);
-                let btn_rect = Rect::new(bx, by, btn_w, 1);
+                let btn_rect = render_modal_button(
+                    f,
+                    lang.assets.btn_close,
+                    inner,
+                    1,
+                    ui.modal_close_hovered,
+                    ui.modal_close_pressed,
+                    &colors,
+                );
                 ui.modal_close_rect = Some(btn_rect);
-                let mut btn_style = Style::default()
-                    .bg(Color::Gray)
-                    .fg(Color::Black)
-                    .add_modifier(Modifier::BOLD);
-                if ui.modal_close_pressed {
-                    btn_style = Style::default()
-                        .bg(Color::Green)
-                        .fg(Color::Black)
-                        .add_modifier(Modifier::BOLD);
-                } else if ui.modal_close_hovered {
-                    btn_style = Style::default()
-                        .bg(Color::White)
-                        .fg(Color::Black)
-                        .add_modifier(Modifier::BOLD);
-                }
-                let btn =
-                    Paragraph::new(Spans::from(Span::styled(lang.assets.btn_close, btn_style)))
-                        .alignment(Alignment::Center)
-                        .block(Block::default());
-                f.render_widget(btn, btn_rect);
             }
         })?;
 
@@ -2816,14 +2678,61 @@ fn center_rect(width: u16, height: u16, r: Rect) -> Rect {
     Rect::new(x, y, width, height)
 }
 
-/// Create a centered rectangle within the given area
-fn centered_block(w: u16, h: u16, r: Rect) -> Rect {
-    center_rect(w, h, r)
-}
-
 /// Create a rectangle centered horizontally and aligned to the bottom
 fn bottom_centered_block(width: u16, height: u16, r: Rect) -> Rect {
     let x = r.x + (r.width.saturating_sub(width)) / 2;
     let y = r.y + r.height.saturating_sub(height);
     Rect::new(x, y, width, height)
+}
+
+/// Calculate the inner content area of a bordered rectangle
+/// Subtracts 1 from each edge to account for borders
+fn inner_rect(outer: Rect) -> Rect {
+    Rect::new(
+        outer.x + 1,
+        outer.y + 1,
+        outer.width.saturating_sub(2),
+        outer.height.saturating_sub(2),
+    )
+}
+
+/// Render a modal button with state-based styling
+/// Returns the button rectangle for hover/click detection
+fn render_modal_button<B: ratatui::backend::Backend>(
+    f: &mut ratatui::Frame<B>,
+    button_text: &str,
+    container: Rect,
+    y_offset: u16,
+    is_hovered: bool,
+    is_pressed: bool,
+    colors: &ColorPalette,
+) -> Rect {
+    let btn_w = button_text.width() as u16;
+    let bx = container.x + (container.width.saturating_sub(btn_w)) / 2;
+    let by = container.y + container.height.saturating_sub(y_offset);
+    let btn_rect = Rect::new(bx, by, btn_w, 1);
+
+    let btn_style = if is_pressed {
+        Style::default()
+            .bg(colors.green)
+            .fg(colors.black)
+            .add_modifier(Modifier::BOLD)
+    } else if is_hovered {
+        Style::default()
+            .bg(colors.white)
+            .fg(colors.black)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+            .bg(colors.gray)
+            .fg(colors.black)
+            .add_modifier(Modifier::BOLD)
+    };
+
+    let btn = Paragraph::new(Spans::from(Span::styled(button_text, btn_style)))
+        .alignment(Alignment::Center)
+        .block(Block::default());
+    f.render_widget(btn, btn_rect);
+
+    btn_rect
 }

@@ -52,3 +52,56 @@ impl WTMatch for Color {
         }
     }
 }
+
+/// Pre-computed 16 ANSI colors adjusted for Windows Terminal compatibility.
+/// Initialize once at program start to avoid repeated terminal capability detection.
+#[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
+pub struct ColorPalette {
+    pub black: Color,
+    pub red: Color,
+    pub green: Color,
+    pub yellow: Color,
+    pub blue: Color,
+    pub magenta: Color,
+    pub cyan: Color,
+    pub gray: Color,
+    pub dark_gray: Color,
+    pub light_red: Color,
+    pub light_green: Color,
+    pub light_yellow: Color,
+    pub light_blue: Color,
+    pub light_magenta: Color,
+    pub light_cyan: Color,
+    pub white: Color,
+}
+
+impl ColorPalette {
+    /// Create a new color palette with pre-computed colors based on terminal capabilities.
+    pub fn new() -> Self {
+        Self {
+            black: Color::Black.wtmatch(),
+            red: Color::Red.wtmatch(),
+            green: Color::Green.wtmatch(),
+            yellow: Color::Yellow.wtmatch(),
+            blue: Color::Blue.wtmatch(),
+            magenta: Color::Magenta.wtmatch(),
+            cyan: Color::Cyan.wtmatch(),
+            gray: Color::Gray.wtmatch(),
+            dark_gray: Color::DarkGray.wtmatch(),
+            light_red: Color::LightRed.wtmatch(),
+            light_green: Color::LightGreen.wtmatch(),
+            light_yellow: Color::LightYellow.wtmatch(),
+            light_blue: Color::LightBlue.wtmatch(),
+            light_magenta: Color::LightMagenta.wtmatch(),
+            light_cyan: Color::LightCyan.wtmatch(),
+            white: Color::White.wtmatch(),
+        }
+    }
+}
+
+impl Default for ColorPalette {
+    fn default() -> Self {
+        Self::new()
+    }
+}
