@@ -454,8 +454,7 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
             // glyphs are computed outside the main loop and updated when config changes
 
             // board area
-            let board_area =
-                center_rect(((game.w * 2) as u16) + 3, (game.h as u16) + 2, chunks[1]);
+            let board_area = center_rect(((game.w * 2) as u16) + 3, (game.h as u16) + 2, chunks[1]);
             board_rect = Some(board_area);
             let mut lines = vec![];
             for y in 0..game.h {
@@ -1149,18 +1148,15 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                 let inner = inner_rect(mrect);
 
                 let (line1, line2) = match ui.confirm_type {
-                    Some(ConfirmType::Exit) => (
-                        lang.assets.confirm_in_game,
-                        lang.assets.confirm_exit,
-                    ),
-                    Some(ConfirmType::New) => (
-                        lang.assets.confirm_in_game,
-                        lang.assets.confirm_new,
-                    ),
-                    Some(ConfirmType::Difficulty) => (
-                        lang.assets.confirm_in_game,
-                        lang.assets.confirm_difficulty,
-                    ),
+                    Some(ConfirmType::Exit) => {
+                        (lang.assets.confirm_in_game, lang.assets.confirm_exit)
+                    }
+                    Some(ConfirmType::New) => {
+                        (lang.assets.confirm_in_game, lang.assets.confirm_new)
+                    }
+                    Some(ConfirmType::Difficulty) => {
+                        (lang.assets.confirm_in_game, lang.assets.confirm_difficulty)
+                    }
                     None => ("", ""),
                 };
 
@@ -1200,9 +1196,8 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                         .fg(colors.black)
                         .add_modifier(Modifier::BOLD)
                 };
-                let yes_btn =
-                    Paragraph::new(Spans::from(Span::styled(yes_text, yes_style)))
-                        .alignment(Alignment::Center);
+                let yes_btn = Paragraph::new(Spans::from(Span::styled(yes_text, yes_style)))
+                    .alignment(Alignment::Center);
                 f.render_widget(yes_btn, yes_rect);
 
                 // No button
@@ -1273,7 +1268,11 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                                                         0 => Difficulty::Beginner,
                                                         1 => Difficulty::Intermediate,
                                                         2 => Difficulty::Expert,
-                                                        3 => Difficulty::Custom(cfg.custom_w, cfg.custom_h, cfg.custom_n),
+                                                        3 => Difficulty::Custom(
+                                                            cfg.custom_w,
+                                                            cfg.custom_h,
+                                                            cfg.custom_n,
+                                                        ),
                                                         _ => cfg.difficulty.clone(),
                                                     };
                                                     cfg.difficulty = new_diff;
@@ -1406,7 +1405,8 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                                                     // Valid input, check if game is in progress
                                                     if game.started && game.game_over.is_none() {
                                                         ui.showing_confirm = true;
-                                                        ui.confirm_type = Some(ConfirmType::Difficulty);
+                                                        ui.confirm_type =
+                                                            Some(ConfirmType::Difficulty);
                                                         ui.pending_difficulty = Some(3);
                                                         // Save the custom values temporarily
                                                         cfg.custom_w = w;
@@ -1422,7 +1422,8 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                                                         cfg.custom_w = w;
                                                         cfg.custom_h = h;
                                                         cfg.custom_n = n;
-                                                        cfg.difficulty = Difficulty::Custom(w, h, n);
+                                                        cfg.difficulty =
+                                                            Difficulty::Custom(w, h, n);
                                                         save_config(&cfg);
                                                         game = Game::new(w, h, n);
                                                         reset_ui_after_new_game(&mut game, &mut ui);
@@ -1542,7 +1543,8 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                                                 if game.started && game.game_over.is_none() {
                                                     ui.showing_confirm = true;
                                                     ui.confirm_type = Some(ConfirmType::Difficulty);
-                                                    ui.pending_difficulty = Some(difficulty_selected);
+                                                    ui.pending_difficulty =
+                                                        Some(difficulty_selected);
                                                 } else {
                                                     cfg.difficulty = Difficulty::from_index(
                                                         difficulty_selected,
@@ -1933,33 +1935,41 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                                     // Check Yes button hover
                                     if let Some(yes_rect) = ui.confirm_yes_rect {
                                         ui.confirm_yes_hovered = me.column >= yes_rect.x
-                                            && me.column <= yes_rect.x + yes_rect.width.saturating_sub(1)
+                                            && me.column
+                                                <= yes_rect.x + yes_rect.width.saturating_sub(1)
                                             && me.row >= yes_rect.y
-                                            && me.row <= yes_rect.y + yes_rect.height.saturating_sub(1);
+                                            && me.row
+                                                <= yes_rect.y + yes_rect.height.saturating_sub(1);
                                     }
                                     // Check No button hover
                                     if let Some(no_rect) = ui.confirm_no_rect {
                                         ui.confirm_no_hovered = me.column >= no_rect.x
-                                            && me.column <= no_rect.x + no_rect.width.saturating_sub(1)
+                                            && me.column
+                                                <= no_rect.x + no_rect.width.saturating_sub(1)
                                             && me.row >= no_rect.y
-                                            && me.row <= no_rect.y + no_rect.height.saturating_sub(1);
+                                            && me.row
+                                                <= no_rect.y + no_rect.height.saturating_sub(1);
                                     }
                                 }
                                 MouseEventKind::Down(MouseButton::Left) => {
                                     if let Some(yes_rect) = ui.confirm_yes_rect {
                                         if me.column >= yes_rect.x
-                                            && me.column <= yes_rect.x + yes_rect.width.saturating_sub(1)
+                                            && me.column
+                                                <= yes_rect.x + yes_rect.width.saturating_sub(1)
                                             && me.row >= yes_rect.y
-                                            && me.row <= yes_rect.y + yes_rect.height.saturating_sub(1)
+                                            && me.row
+                                                <= yes_rect.y + yes_rect.height.saturating_sub(1)
                                         {
                                             ui.confirm_yes_pressed = true;
                                         }
                                     }
                                     if let Some(no_rect) = ui.confirm_no_rect {
                                         if me.column >= no_rect.x
-                                            && me.column <= no_rect.x + no_rect.width.saturating_sub(1)
+                                            && me.column
+                                                <= no_rect.x + no_rect.width.saturating_sub(1)
                                             && me.row >= no_rect.y
-                                            && me.row <= no_rect.y + no_rect.height.saturating_sub(1)
+                                            && me.row
+                                                <= no_rect.y + no_rect.height.saturating_sub(1)
                                         {
                                             ui.confirm_no_pressed = true;
                                         }
@@ -1970,9 +1980,12 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                                     if ui.confirm_yes_pressed {
                                         if let Some(yes_rect) = ui.confirm_yes_rect {
                                             if me.column >= yes_rect.x
-                                                && me.column <= yes_rect.x + yes_rect.width.saturating_sub(1)
+                                                && me.column
+                                                    <= yes_rect.x + yes_rect.width.saturating_sub(1)
                                                 && me.row >= yes_rect.y
-                                                && me.row <= yes_rect.y + yes_rect.height.saturating_sub(1)
+                                                && me.row
+                                                    <= yes_rect.y
+                                                        + yes_rect.height.saturating_sub(1)
                                             {
                                                 // Execute confirmed action
                                                 match ui.confirm_type {
@@ -1991,14 +2004,20 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                                                                 0 => Difficulty::Beginner,
                                                                 1 => Difficulty::Intermediate,
                                                                 2 => Difficulty::Expert,
-                                                                3 => Difficulty::Custom(cfg.custom_w, cfg.custom_h, cfg.custom_n),
+                                                                3 => Difficulty::Custom(
+                                                                    cfg.custom_w,
+                                                                    cfg.custom_h,
+                                                                    cfg.custom_n,
+                                                                ),
                                                                 _ => cfg.difficulty.clone(),
                                                             };
                                                             cfg.difficulty = new_diff;
                                                             save_config(&cfg);
                                                             let (w, h, m) = cfg.difficulty.params();
                                                             game = Game::new(w, h, m);
-                                                            reset_ui_after_new_game(&mut game, &mut ui);
+                                                            reset_ui_after_new_game(
+                                                                &mut game, &mut ui,
+                                                            );
                                                             ui.showing_difficulty = false;
                                                         }
                                                     }
@@ -2013,9 +2032,11 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                                     if ui.confirm_no_pressed {
                                         if let Some(no_rect) = ui.confirm_no_rect {
                                             if me.column >= no_rect.x
-                                                && me.column <= no_rect.x + no_rect.width.saturating_sub(1)
+                                                && me.column
+                                                    <= no_rect.x + no_rect.width.saturating_sub(1)
                                                 && me.row >= no_rect.y
-                                                && me.row <= no_rect.y + no_rect.height.saturating_sub(1)
+                                                && me.row
+                                                    <= no_rect.y + no_rect.height.saturating_sub(1)
                                             {
                                                 // Just close confirmation dialog
                                                 ui.close_confirmation_dialog();
@@ -2275,10 +2296,13 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                                                         ui.custom_error_msg = None;
                                                     } else {
                                                         // Check if game is in progress
-                                                        if game.started && game.game_over.is_none() {
+                                                        if game.started && game.game_over.is_none()
+                                                        {
                                                             ui.showing_confirm = true;
-                                                            ui.confirm_type = Some(ConfirmType::Difficulty);
-                                                            ui.pending_difficulty = Some(difficulty_selected);
+                                                            ui.confirm_type =
+                                                                Some(ConfirmType::Difficulty);
+                                                            ui.pending_difficulty =
+                                                                Some(difficulty_selected);
                                                         } else {
                                                             // apply selection immediately
                                                             cfg.difficulty = Difficulty::from_index(
@@ -2290,7 +2314,9 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                                                             save_config(&cfg);
                                                             let (w, h, m) = cfg.difficulty.params();
                                                             game = Game::new(w, h, m);
-                                                            reset_ui_after_new_game(&mut game, &mut ui);
+                                                            reset_ui_after_new_game(
+                                                                &mut game, &mut ui,
+                                                            );
                                                             ui.showing_difficulty = false;
                                                             // clear modal geometry so subsequent mouse events are handled by main UI
                                                             ui.modal_rect = None;
@@ -2353,9 +2379,11 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                                                             Some((2, Instant::now()));
                                                     } else {
                                                         // Valid input, check if game is in progress
-                                                        if game.started && game.game_over.is_none() {
+                                                        if game.started && game.game_over.is_none()
+                                                        {
                                                             ui.showing_confirm = true;
-                                                            ui.confirm_type = Some(ConfirmType::Difficulty);
+                                                            ui.confirm_type =
+                                                                Some(ConfirmType::Difficulty);
                                                             ui.pending_difficulty = Some(3);
                                                             // Save the custom values temporarily
                                                             cfg.custom_w = w;
@@ -2375,7 +2403,9 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                                                                 Difficulty::Custom(w, h, n);
                                                             save_config(&cfg);
                                                             game = Game::new(w, h, n);
-                                                            reset_ui_after_new_game(&mut game, &mut ui);
+                                                            reset_ui_after_new_game(
+                                                                &mut game, &mut ui,
+                                                            );
                                                             ui.showing_difficulty = false;
                                                             ui.custom_input_mode = None;
                                                             ui.custom_w_str.clear();
@@ -2514,13 +2544,17 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                                                     0 => ui.showing_help = true,
                                                     1 => {
                                                         // New game - check if game is in progress
-                                                        if game.started && game.game_over.is_none() {
+                                                        if game.started && game.game_over.is_none()
+                                                        {
                                                             ui.showing_confirm = true;
-                                                            ui.confirm_type = Some(ConfirmType::New);
+                                                            ui.confirm_type =
+                                                                Some(ConfirmType::New);
                                                         } else {
                                                             let (w, h, m) = cfg.difficulty.params();
                                                             game = Game::new(w, h, m);
-                                                            reset_ui_after_new_game(&mut game, &mut ui);
+                                                            reset_ui_after_new_game(
+                                                                &mut game, &mut ui,
+                                                            );
                                                         }
                                                     }
                                                     2 => ui.showing_record = true,

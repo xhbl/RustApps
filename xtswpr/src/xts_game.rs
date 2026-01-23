@@ -13,9 +13,9 @@ use std::time::{Duration, Instant};
 /// Difficulty presets and custom settings
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Difficulty {
-    Beginner,                        // 9x9, 10 mines
-    Intermediate,                    // 16x16, 40 mines
-    Expert,                          // 30x16, 99 mines
+    Beginner,                    // 9x9, 10 mines
+    Intermediate,                // 16x16, 40 mines
+    Expert,                      // 30x16, 99 mines
     Custom(usize, usize, usize), // width, height, mines
 }
 
@@ -93,8 +93,8 @@ impl Difficulty {
 /// Record entry for best completion time
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Record {
-    pub secs: u64,       // Completion time in seconds
-    pub date: String,    // Date in ISO format (YYYY-MM-DD)
+    pub secs: u64,    // Completion time in seconds
+    pub date: String, // Date in ISO format (YYYY-MM-DD)
 }
 
 /// User configuration and game records
@@ -104,22 +104,22 @@ pub struct Record {
 pub struct Config {
     // Current difficulty setting
     pub difficulty: Difficulty,
-    
+
     // Best time records for each preset difficulty
     pub best_beginner: Option<Record>,
     pub best_intermediate: Option<Record>,
     pub best_expert: Option<Record>,
-    
+
     // Custom difficulty parameters
     pub custom_w: usize,
     pub custom_h: usize,
     pub custom_n: usize,
-    
+
     // Game preferences
-    pub use_question_marks: bool,  // Enable three-state flagging (none/flag/?)
-    pub show_indicator: bool,       // Show cursor position indicator
-    pub ascii_icons: bool,          // Use ASCII fallback icons
-    pub language: String,           // Language code ("en" or "zh")
+    pub use_question_marks: bool, // Enable three-state flagging (none/flag/?)
+    pub show_indicator: bool,     // Show cursor position indicator
+    pub ascii_icons: bool,        // Use ASCII fallback icons
+    pub language: String,         // Language code ("en" or "zh")
 }
 
 impl Default for Config {
@@ -211,17 +211,17 @@ impl Config {
 /// Main game state
 #[derive(Clone)]
 pub struct Game {
-    pub w: usize,            // Board width
-    pub h: usize,            // Board height
-    pub mines: usize,        // Total mine count
-    pub board: Vec<Cell>,    // Board cells (mines + adjacency counts)
-    pub revealed: Vec<bool>, // Cell reveal status
-    pub flagged: Vec<u8>,    // Cell flag status (0=none, 1=flag, 2=question)
-    pub cursor: (usize, usize), // Current cursor position
-    pub started: bool,       // Has the game started (first reveal)
+    pub w: usize,                    // Board width
+    pub h: usize,                    // Board height
+    pub mines: usize,                // Total mine count
+    pub board: Vec<Cell>,            // Board cells (mines + adjacency counts)
+    pub revealed: Vec<bool>,         // Cell reveal status
+    pub flagged: Vec<u8>,            // Cell flag status (0=none, 1=flag, 2=question)
+    pub cursor: (usize, usize),      // Current cursor position
+    pub started: bool,               // Has the game started (first reveal)
     pub start_time: Option<Instant>, // Timer start instant
-    pub elapsed: Duration,   // Total elapsed time
-    pub game_over: Option<bool>, // Game result (Some(true)=win, Some(false)=loss, None=ongoing)
+    pub elapsed: Duration,           // Total elapsed time
+    pub game_over: Option<bool>,     // Game result (Some(true)=win, Some(false)=loss, None=ongoing)
 }
 
 /// A single cell on the minesweeper board
