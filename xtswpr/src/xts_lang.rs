@@ -61,6 +61,14 @@ pub struct Assets {
     // Buttons
     pub btn_ok: &'static str,
     pub btn_close: &'static str,
+    pub btn_yes: &'static str,
+    pub btn_no: &'static str,
+
+    // Confirmation dialogs
+    pub confirm_in_game: &'static str,
+    pub confirm_exit: &'static str,
+    pub confirm_new: &'static str,
+    pub confirm_difficulty: &'static str,
 
     // Terminal size messages
     pub tsmsg_line1: &'static str,
@@ -100,7 +108,7 @@ pub fn english_assets() -> Assets {
         opt_show_indicator: "Show indicator",
         opt_use_question: "Use ? marks",
         opt_ascii_icons: "ASCII icons",
-        opt_language: "Language",
+        opt_language: "🌐 Language",
 
         // Help modal
         help_controls: " Controls:",
@@ -133,6 +141,14 @@ pub fn english_assets() -> Assets {
         // Buttons
         btn_ok: " OK ",
         btn_close: " CLOSE ",
+        btn_yes: " Yes ",
+        btn_no: " No ",
+
+        // Confirmation dialogs
+        confirm_in_game: "Game in progress",
+        confirm_exit: "Confirm exit?",
+        confirm_new: "Start new one?",
+        confirm_difficulty: "Start new with specified difficulty?",
 
         // terminal size messages
         tsmsg_line1: "Terminal layout too small",
@@ -173,7 +189,7 @@ pub fn chinese_assets() -> Assets {
         opt_show_indicator: "显示游标",
         opt_use_question: "使用问号",
         opt_ascii_icons: "ASCII图标",
-        opt_language: "语言",
+        opt_language: "🌐 语言",
 
         // Help modal
         help_controls: " 操作说明：",
@@ -206,7 +222,14 @@ pub fn chinese_assets() -> Assets {
         // Buttons
         btn_ok: " 确定 ",
         btn_close: " 关闭 ",
+        btn_yes: " 是 ",
+        btn_no: " 否 ",
 
+        // Confirmation dialogs
+        confirm_in_game: "游戏正在进行中",
+        confirm_exit: "确认退出吗？",
+        confirm_new: "重开一局吗？",
+        confirm_difficulty: "以指定难度重开吗？",
         // terminal size messages
         tsmsg_line1: "终端屏幕布局过小",
         tsmsg_line2: "最小需要尺寸：{} x {}",

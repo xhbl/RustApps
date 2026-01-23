@@ -78,6 +78,22 @@ struct UiState {
     custom_h_rect: Option<Rect>,
     custom_n_rect: Option<Rect>,
     custom_invalid_field: Option<(u8, Instant)>, // (field_index, flash_start_time) for error flashing
+    showing_confirm: bool,
+    confirm_type: Option<ConfirmType>,
+    confirm_yes_hovered: bool,
+    confirm_yes_pressed: bool,
+    confirm_no_hovered: bool,
+    confirm_no_pressed: bool,
+    confirm_yes_rect: Option<Rect>,
+    confirm_no_rect: Option<Rect>,
+    pending_difficulty: Option<usize>, // Pending difficulty change for confirmation
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ConfirmType {
+    Exit,
+    New,
+    Difficulty,
 }
 
 impl UiState {
@@ -125,6 +141,15 @@ impl UiState {
             key_timer: None,
             supports_key_release: cfg!(windows),
             cursor_indicator: None,
+            showing_confirm: false,
+            confirm_type: None,
+            confirm_yes_hovered: false,
+            confirm_yes_pressed: false,
+            confirm_no_hovered: false,
+            confirm_no_pressed: false,
+            confirm_yes_rect: None,
+            confirm_no_rect: None,
+            pending_difficulty: None,
         }
     }
 
@@ -161,6 +186,23 @@ impl UiState {
         self.key_timer = None;
         self.supports_key_release = cfg!(windows);
         self.cursor_indicator = None;
+    }
+
+    /// Close confirmation dialog and clear all related state
+    fn close_confirmation_dialog(&mut self) {
+        self.showing_confirm = false;
+        self.confirm_type = None;
+        self.pending_difficulty = None;
+        self.confirm_yes_rect = None;
+        self.confirm_no_rect = None;
+        self.confirm_yes_hovered = false;
+        self.confirm_yes_pressed = false;
+        self.confirm_no_hovered = false;
+        self.confirm_no_pressed = false;
+        self.modal_rect = None;
+        self.modal_close_rect = None;
+        self.modal_close_hovered = false;
+        self.modal_close_pressed = false;
     }
 }
 
@@ -1097,6 +1139,95 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                 );
                 ui.modal_close_rect = Some(btn_rect);
             }
+
+            // Confirmation dialog (render last so it's on top)
+            if ui.showing_confirm {
+                let mrect = center_rect(44, 7, size);
+                ui.modal_rect = Some(mrect);
+                f.render_widget(Clear, mrect);
+                f.render_widget(Block::default().borders(Borders::ALL), mrect);
+                let inner = inner_rect(mrect);
+
+                let (line1, line2) = match ui.confirm_type {
+                    Some(ConfirmType::Exit) => (
+                        lang.assets.confirm_in_game,
+                        lang.assets.confirm_exit,
+                    ),
+                    Some(ConfirmType::New) => (
+                        lang.assets.confirm_in_game,
+                        lang.assets.confirm_new,
+                    ),
+                    Some(ConfirmType::Difficulty) => (
+                        lang.assets.confirm_in_game,
+                        lang.assets.confirm_difficulty,
+                    ),
+                    None => ("", ""),
+                };
+
+                let lines = vec![
+                    Spans::from(Span::raw("")),
+                    Spans::from(Span::raw(line1)),
+                    Spans::from(Span::raw(line2)),
+                ];
+                let p = Paragraph::new(Text::from(lines)).alignment(Alignment::Center);
+                f.render_widget(p, inner);
+
+                // Yes and No buttons side by side
+                let yes_text = lang.assets.btn_yes;
+                let no_text = lang.assets.btn_no;
+                let yes_w = yes_text.width() as u16;
+                let no_w = no_text.width() as u16;
+                let total_w = yes_w + no_w + 4; // 4 spaces between buttons
+                let start_x = inner.x + (inner.width.saturating_sub(total_w)) / 2;
+                let btn_y = inner.y + inner.height.saturating_sub(1);
+
+                // Yes button
+                let yes_rect = Rect::new(start_x, btn_y, yes_w, 1);
+                ui.confirm_yes_rect = Some(yes_rect);
+                let yes_style = if ui.confirm_yes_pressed {
+                    Style::default()
+                        .bg(colors.green)
+                        .fg(colors.black)
+                        .add_modifier(Modifier::BOLD)
+                } else if ui.confirm_yes_hovered {
+                    Style::default()
+                        .bg(colors.white)
+                        .fg(colors.black)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                        .bg(colors.gray)
+                        .fg(colors.black)
+                        .add_modifier(Modifier::BOLD)
+                };
+                let yes_btn =
+                    Paragraph::new(Spans::from(Span::styled(yes_text, yes_style)))
+                        .alignment(Alignment::Center);
+                f.render_widget(yes_btn, yes_rect);
+
+                // No button
+                let no_rect = Rect::new(start_x + yes_w + 4, btn_y, no_w, 1);
+                ui.confirm_no_rect = Some(no_rect);
+                let no_style = if ui.confirm_no_pressed {
+                    Style::default()
+                        .bg(colors.green)
+                        .fg(colors.black)
+                        .add_modifier(Modifier::BOLD)
+                } else if ui.confirm_no_hovered {
+                    Style::default()
+                        .bg(colors.white)
+                        .fg(colors.black)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                        .bg(colors.gray)
+                        .fg(colors.black)
+                        .add_modifier(Modifier::BOLD)
+                };
+                let no_btn = Paragraph::new(Spans::from(Span::styled(no_text, no_style)))
+                    .alignment(Alignment::Center);
+                f.render_widget(no_btn, no_rect);
+            }
         })?;
 
         // bind cursor indicator to current logical cursor each frame so it's always synced
@@ -1121,6 +1252,54 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                 }) => {
                     match kind {
                         KeyEventKind::Press => {
+                            // Handle confirmation dialog first (highest priority)
+                            if ui.showing_confirm {
+                                match code {
+                                    KeyCode::Enter => {
+                                        // Enter = Yes button
+                                        match ui.confirm_type {
+                                            Some(ConfirmType::Exit) => {
+                                                exit_requested = true;
+                                            }
+                                            Some(ConfirmType::New) => {
+                                                let (w, h, m) = cfg.difficulty.params();
+                                                game = Game::new(w, h, m);
+                                                reset_ui_after_new_game(&mut game, &mut ui);
+                                            }
+                                            Some(ConfirmType::Difficulty) => {
+                                                if let Some(idx) = ui.pending_difficulty {
+                                                    difficulty_selected = idx;
+                                                    let new_diff = match idx {
+                                                        0 => Difficulty::Beginner,
+                                                        1 => Difficulty::Intermediate,
+                                                        2 => Difficulty::Expert,
+                                                        3 => Difficulty::Custom(cfg.custom_w, cfg.custom_h, cfg.custom_n),
+                                                        _ => cfg.difficulty.clone(),
+                                                    };
+                                                    cfg.difficulty = new_diff;
+                                                    save_config(&cfg);
+                                                    let (w, h, m) = cfg.difficulty.params();
+                                                    game = Game::new(w, h, m);
+                                                    reset_ui_after_new_game(&mut game, &mut ui);
+                                                    ui.showing_difficulty = false;
+                                                }
+                                            }
+                                            None => {}
+                                        }
+                                        ui.close_confirmation_dialog();
+                                        continue;
+                                    }
+                                    KeyCode::Esc => {
+                                        // Esc = No button (just close)
+                                        ui.close_confirmation_dialog();
+                                        continue;
+                                    }
+                                    _ => {
+                                        // Ignore other keys when confirmation dialog is showing
+                                        continue;
+                                    }
+                                }
+                            }
                             if ui.showing_difficulty {
                                 // Handle custom difficulty input mode
                                 if ui.custom_input_mode.is_some() {
@@ -1224,23 +1403,39 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                                                     ui.custom_invalid_field =
                                                         Some((2, Instant::now()));
                                                 } else {
-                                                    // Valid input, apply
-                                                    cfg.custom_w = w;
-                                                    cfg.custom_h = h;
-                                                    cfg.custom_n = n;
-                                                    cfg.difficulty = Difficulty::Custom(w, h, n);
-                                                    save_config(&cfg);
-                                                    game = Game::new(w, h, n);
-                                                    reset_ui_after_new_game(&mut game, &mut ui);
-                                                    ui.showing_difficulty = false;
-                                                    ui.custom_input_mode = None;
-                                                    ui.custom_w_str.clear();
-                                                    ui.custom_h_str.clear();
-                                                    ui.custom_n_str.clear();
-                                                    ui.custom_error_msg = None;
-                                                    ui.modal_rect = None;
-                                                    ui.modal_close_rect = None;
-                                                    ui.modal_close_pressed = false;
+                                                    // Valid input, check if game is in progress
+                                                    if game.started && game.game_over.is_none() {
+                                                        ui.showing_confirm = true;
+                                                        ui.confirm_type = Some(ConfirmType::Difficulty);
+                                                        ui.pending_difficulty = Some(3);
+                                                        // Save the custom values temporarily
+                                                        cfg.custom_w = w;
+                                                        cfg.custom_h = h;
+                                                        cfg.custom_n = n;
+                                                        // Clear custom input mode to return to difficulty selection
+                                                        ui.custom_input_mode = None;
+                                                        ui.custom_w_str.clear();
+                                                        ui.custom_h_str.clear();
+                                                        ui.custom_n_str.clear();
+                                                        ui.custom_error_msg = None;
+                                                    } else {
+                                                        cfg.custom_w = w;
+                                                        cfg.custom_h = h;
+                                                        cfg.custom_n = n;
+                                                        cfg.difficulty = Difficulty::Custom(w, h, n);
+                                                        save_config(&cfg);
+                                                        game = Game::new(w, h, n);
+                                                        reset_ui_after_new_game(&mut game, &mut ui);
+                                                        ui.showing_difficulty = false;
+                                                        ui.custom_input_mode = None;
+                                                        ui.custom_w_str.clear();
+                                                        ui.custom_h_str.clear();
+                                                        ui.custom_n_str.clear();
+                                                        ui.custom_error_msg = None;
+                                                        ui.modal_rect = None;
+                                                        ui.modal_close_rect = None;
+                                                        ui.modal_close_pressed = false;
+                                                    }
                                                 }
                                             }
                                         }
@@ -1258,40 +1453,58 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                                     // Normal difficulty selection mode
                                     match code {
                                         KeyCode::Char('1') => {
-                                            difficulty_selected = 0;
-                                            cfg.difficulty = Difficulty::Beginner;
-                                            save_config(&cfg);
-                                            let (w, h, m) = cfg.difficulty.params();
-                                            game = Game::new(w, h, m);
-                                            reset_ui_after_new_game(&mut game, &mut ui);
-                                            ui.showing_difficulty = false;
-                                            ui.modal_rect = None;
-                                            ui.modal_close_rect = None;
-                                            ui.modal_close_pressed = false;
+                                            if game.started && game.game_over.is_none() {
+                                                ui.showing_confirm = true;
+                                                ui.confirm_type = Some(ConfirmType::Difficulty);
+                                                ui.pending_difficulty = Some(0);
+                                            } else {
+                                                difficulty_selected = 0;
+                                                cfg.difficulty = Difficulty::Beginner;
+                                                save_config(&cfg);
+                                                let (w, h, m) = cfg.difficulty.params();
+                                                game = Game::new(w, h, m);
+                                                reset_ui_after_new_game(&mut game, &mut ui);
+                                                ui.showing_difficulty = false;
+                                                ui.modal_rect = None;
+                                                ui.modal_close_rect = None;
+                                                ui.modal_close_pressed = false;
+                                            }
                                         }
                                         KeyCode::Char('2') => {
-                                            difficulty_selected = 1;
-                                            cfg.difficulty = Difficulty::Intermediate;
-                                            save_config(&cfg);
-                                            let (w, h, m) = cfg.difficulty.params();
-                                            game = Game::new(w, h, m);
-                                            reset_ui_after_new_game(&mut game, &mut ui);
-                                            ui.showing_difficulty = false;
-                                            ui.modal_rect = None;
-                                            ui.modal_close_rect = None;
-                                            ui.modal_close_pressed = false;
+                                            if game.started && game.game_over.is_none() {
+                                                ui.showing_confirm = true;
+                                                ui.confirm_type = Some(ConfirmType::Difficulty);
+                                                ui.pending_difficulty = Some(1);
+                                            } else {
+                                                difficulty_selected = 1;
+                                                cfg.difficulty = Difficulty::Intermediate;
+                                                save_config(&cfg);
+                                                let (w, h, m) = cfg.difficulty.params();
+                                                game = Game::new(w, h, m);
+                                                reset_ui_after_new_game(&mut game, &mut ui);
+                                                ui.showing_difficulty = false;
+                                                ui.modal_rect = None;
+                                                ui.modal_close_rect = None;
+                                                ui.modal_close_pressed = false;
+                                            }
                                         }
                                         KeyCode::Char('3') => {
-                                            difficulty_selected = 2;
-                                            cfg.difficulty = Difficulty::Expert;
-                                            save_config(&cfg);
-                                            let (w, h, m) = cfg.difficulty.params();
-                                            game = Game::new(w, h, m);
-                                            reset_ui_after_new_game(&mut game, &mut ui);
-                                            ui.showing_difficulty = false;
-                                            ui.modal_rect = None;
-                                            ui.modal_close_rect = None;
-                                            ui.modal_close_pressed = false;
+                                            if game.started && game.game_over.is_none() {
+                                                ui.showing_confirm = true;
+                                                ui.confirm_type = Some(ConfirmType::Difficulty);
+                                                ui.pending_difficulty = Some(2);
+                                            } else {
+                                                difficulty_selected = 2;
+                                                cfg.difficulty = Difficulty::Expert;
+                                                save_config(&cfg);
+                                                let (w, h, m) = cfg.difficulty.params();
+                                                game = Game::new(w, h, m);
+                                                reset_ui_after_new_game(&mut game, &mut ui);
+                                                ui.showing_difficulty = false;
+                                                ui.modal_rect = None;
+                                                ui.modal_close_rect = None;
+                                                ui.modal_close_pressed = false;
+                                            }
                                         }
                                         KeyCode::Char('4') => {
                                             difficulty_selected = 3;
@@ -1325,24 +1538,32 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                                                 ui.custom_n_str = format!("{}", cfg.custom_n);
                                                 ui.custom_error_msg = None;
                                             } else {
-                                                cfg.difficulty = Difficulty::from_index(
-                                                    difficulty_selected,
-                                                    cfg.custom_w,
-                                                    cfg.custom_h,
-                                                    cfg.custom_n,
-                                                );
-                                                save_config(&cfg);
-                                                let (w, h, m) = cfg.difficulty.params();
-                                                game = Game::new(w, h, m);
-                                                reset_ui_after_new_game(&mut game, &mut ui);
-                                                ui.showing_difficulty = false;
-                                                ui.modal_rect = None;
-                                                ui.modal_close_rect = None;
-                                                ui.modal_close_pressed = false;
+                                                // Check if game is in progress
+                                                if game.started && game.game_over.is_none() {
+                                                    ui.showing_confirm = true;
+                                                    ui.confirm_type = Some(ConfirmType::Difficulty);
+                                                    ui.pending_difficulty = Some(difficulty_selected);
+                                                } else {
+                                                    cfg.difficulty = Difficulty::from_index(
+                                                        difficulty_selected,
+                                                        cfg.custom_w,
+                                                        cfg.custom_h,
+                                                        cfg.custom_n,
+                                                    );
+                                                    save_config(&cfg);
+                                                    let (w, h, m) = cfg.difficulty.params();
+                                                    game = Game::new(w, h, m);
+                                                    reset_ui_after_new_game(&mut game, &mut ui);
+                                                    ui.showing_difficulty = false;
+                                                    ui.modal_rect = None;
+                                                    ui.modal_close_rect = None;
+                                                    ui.modal_close_pressed = false;
+                                                }
                                             }
                                         }
                                         KeyCode::Esc => {
                                             ui.showing_difficulty = false;
+                                            ui.difficulty_hover = None;
                                             ui.modal_rect = None;
                                             ui.modal_close_rect = None;
                                             ui.modal_close_pressed = false
@@ -1507,12 +1728,24 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                             } else {
                                 // normal gameplay key-press handling
                                 match code {
-                                    KeyCode::Esc => break,
+                                    KeyCode::Esc => {
+                                        if game.started && game.game_over.is_none() {
+                                            ui.showing_confirm = true;
+                                            ui.confirm_type = Some(ConfirmType::Exit);
+                                        } else {
+                                            break;
+                                        }
+                                    }
                                     KeyCode::F(1) => ui.showing_help = true,
                                     KeyCode::F(2) => {
-                                        let (w, h, m) = cfg.difficulty.params();
-                                        game = Game::new(w, h, m);
-                                        reset_ui_after_new_game(&mut game, &mut ui);
+                                        if game.started && game.game_over.is_none() {
+                                            ui.showing_confirm = true;
+                                            ui.confirm_type = Some(ConfirmType::New);
+                                        } else {
+                                            let (w, h, m) = cfg.difficulty.params();
+                                            game = Game::new(w, h, m);
+                                            reset_ui_after_new_game(&mut game, &mut ui);
+                                        }
                                     }
                                     KeyCode::F(4) => ui.showing_record = true,
                                     KeyCode::F(5) => {
@@ -1692,8 +1925,113 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                     }
                 }
                 Event::Mouse(me) => {
-                    // if a modal is open, only respond to mouse events inside modal; otherwise handle menu
-                    if let Some(mrect) = ui.modal_rect {
+                    // Handle confirmation dialog first (highest priority)
+                    if ui.showing_confirm {
+                        if let Some(_mrect) = ui.modal_rect {
+                            match me.kind {
+                                MouseEventKind::Moved => {
+                                    // Check Yes button hover
+                                    if let Some(yes_rect) = ui.confirm_yes_rect {
+                                        ui.confirm_yes_hovered = me.column >= yes_rect.x
+                                            && me.column <= yes_rect.x + yes_rect.width.saturating_sub(1)
+                                            && me.row >= yes_rect.y
+                                            && me.row <= yes_rect.y + yes_rect.height.saturating_sub(1);
+                                    }
+                                    // Check No button hover
+                                    if let Some(no_rect) = ui.confirm_no_rect {
+                                        ui.confirm_no_hovered = me.column >= no_rect.x
+                                            && me.column <= no_rect.x + no_rect.width.saturating_sub(1)
+                                            && me.row >= no_rect.y
+                                            && me.row <= no_rect.y + no_rect.height.saturating_sub(1);
+                                    }
+                                }
+                                MouseEventKind::Down(MouseButton::Left) => {
+                                    if let Some(yes_rect) = ui.confirm_yes_rect {
+                                        if me.column >= yes_rect.x
+                                            && me.column <= yes_rect.x + yes_rect.width.saturating_sub(1)
+                                            && me.row >= yes_rect.y
+                                            && me.row <= yes_rect.y + yes_rect.height.saturating_sub(1)
+                                        {
+                                            ui.confirm_yes_pressed = true;
+                                        }
+                                    }
+                                    if let Some(no_rect) = ui.confirm_no_rect {
+                                        if me.column >= no_rect.x
+                                            && me.column <= no_rect.x + no_rect.width.saturating_sub(1)
+                                            && me.row >= no_rect.y
+                                            && me.row <= no_rect.y + no_rect.height.saturating_sub(1)
+                                        {
+                                            ui.confirm_no_pressed = true;
+                                        }
+                                    }
+                                }
+                                MouseEventKind::Up(MouseButton::Left) => {
+                                    // Handle Yes button click
+                                    if ui.confirm_yes_pressed {
+                                        if let Some(yes_rect) = ui.confirm_yes_rect {
+                                            if me.column >= yes_rect.x
+                                                && me.column <= yes_rect.x + yes_rect.width.saturating_sub(1)
+                                                && me.row >= yes_rect.y
+                                                && me.row <= yes_rect.y + yes_rect.height.saturating_sub(1)
+                                            {
+                                                // Execute confirmed action
+                                                match ui.confirm_type {
+                                                    Some(ConfirmType::Exit) => {
+                                                        exit_requested = true;
+                                                    }
+                                                    Some(ConfirmType::New) => {
+                                                        let (w, h, m) = cfg.difficulty.params();
+                                                        game = Game::new(w, h, m);
+                                                        reset_ui_after_new_game(&mut game, &mut ui);
+                                                    }
+                                                    Some(ConfirmType::Difficulty) => {
+                                                        if let Some(idx) = ui.pending_difficulty {
+                                                            difficulty_selected = idx;
+                                                            let new_diff = match idx {
+                                                                0 => Difficulty::Beginner,
+                                                                1 => Difficulty::Intermediate,
+                                                                2 => Difficulty::Expert,
+                                                                3 => Difficulty::Custom(cfg.custom_w, cfg.custom_h, cfg.custom_n),
+                                                                _ => cfg.difficulty.clone(),
+                                                            };
+                                                            cfg.difficulty = new_diff;
+                                                            save_config(&cfg);
+                                                            let (w, h, m) = cfg.difficulty.params();
+                                                            game = Game::new(w, h, m);
+                                                            reset_ui_after_new_game(&mut game, &mut ui);
+                                                            ui.showing_difficulty = false;
+                                                        }
+                                                    }
+                                                    None => {}
+                                                }
+                                            }
+                                        }
+                                        ui.confirm_yes_pressed = false;
+                                        ui.close_confirmation_dialog();
+                                    }
+                                    // Handle No button click
+                                    if ui.confirm_no_pressed {
+                                        if let Some(no_rect) = ui.confirm_no_rect {
+                                            if me.column >= no_rect.x
+                                                && me.column <= no_rect.x + no_rect.width.saturating_sub(1)
+                                                && me.row >= no_rect.y
+                                                && me.row <= no_rect.y + no_rect.height.saturating_sub(1)
+                                            {
+                                                // Just close confirmation dialog
+                                                ui.close_confirmation_dialog();
+                                            }
+                                        }
+                                        ui.confirm_no_pressed = false;
+                                    }
+                                }
+                                MouseEventKind::Down(MouseButton::Right) => {
+                                    // Right-click = No button (just close)
+                                    ui.close_confirmation_dialog();
+                                }
+                                _ => {}
+                            }
+                        }
+                    } else if let Some(mrect) = ui.modal_rect {
                         // check inside modal; if outside and click -> close modal; if inside and difficulty items -> handle item hover/click
                         match me.kind {
                             MouseEventKind::Moved => {
@@ -1936,22 +2274,29 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                                                             format!("{}", cfg.custom_n);
                                                         ui.custom_error_msg = None;
                                                     } else {
-                                                        // apply selection immediately
-                                                        cfg.difficulty = Difficulty::from_index(
-                                                            difficulty_selected,
-                                                            cfg.custom_w,
-                                                            cfg.custom_h,
-                                                            cfg.custom_n,
-                                                        );
-                                                        save_config(&cfg);
-                                                        let (w, h, m) = cfg.difficulty.params();
-                                                        game = Game::new(w, h, m);
-                                                        reset_ui_after_new_game(&mut game, &mut ui);
-                                                        ui.showing_difficulty = false;
-                                                        // clear modal geometry so subsequent mouse events are handled by main UI
-                                                        ui.modal_rect = None;
-                                                        ui.modal_close_rect = None;
-                                                        ui.modal_close_pressed = false;
+                                                        // Check if game is in progress
+                                                        if game.started && game.game_over.is_none() {
+                                                            ui.showing_confirm = true;
+                                                            ui.confirm_type = Some(ConfirmType::Difficulty);
+                                                            ui.pending_difficulty = Some(difficulty_selected);
+                                                        } else {
+                                                            // apply selection immediately
+                                                            cfg.difficulty = Difficulty::from_index(
+                                                                difficulty_selected,
+                                                                cfg.custom_w,
+                                                                cfg.custom_h,
+                                                                cfg.custom_n,
+                                                            );
+                                                            save_config(&cfg);
+                                                            let (w, h, m) = cfg.difficulty.params();
+                                                            game = Game::new(w, h, m);
+                                                            reset_ui_after_new_game(&mut game, &mut ui);
+                                                            ui.showing_difficulty = false;
+                                                            // clear modal geometry so subsequent mouse events are handled by main UI
+                                                            ui.modal_rect = None;
+                                                            ui.modal_close_rect = None;
+                                                            ui.modal_close_pressed = false;
+                                                        }
                                                     }
                                                 }
                                             }
@@ -2007,24 +2352,40 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                                                         ui.custom_invalid_field =
                                                             Some((2, Instant::now()));
                                                     } else {
-                                                        // Valid input, apply
-                                                        cfg.custom_w = w;
-                                                        cfg.custom_h = h;
-                                                        cfg.custom_n = n;
-                                                        cfg.difficulty =
-                                                            Difficulty::Custom(w, h, n);
-                                                        save_config(&cfg);
-                                                        game = Game::new(w, h, n);
-                                                        reset_ui_after_new_game(&mut game, &mut ui);
-                                                        ui.showing_difficulty = false;
-                                                        ui.custom_input_mode = None;
-                                                        ui.custom_w_str.clear();
-                                                        ui.custom_h_str.clear();
-                                                        ui.custom_n_str.clear();
-                                                        ui.custom_error_msg = None;
-                                                        ui.modal_rect = None;
-                                                        ui.modal_close_rect = None;
-                                                        ui.modal_close_pressed = false;
+                                                        // Valid input, check if game is in progress
+                                                        if game.started && game.game_over.is_none() {
+                                                            ui.showing_confirm = true;
+                                                            ui.confirm_type = Some(ConfirmType::Difficulty);
+                                                            ui.pending_difficulty = Some(3);
+                                                            // Save the custom values temporarily
+                                                            cfg.custom_w = w;
+                                                            cfg.custom_h = h;
+                                                            cfg.custom_n = n;
+                                                            // Clear custom input mode to return to difficulty selection
+                                                            ui.custom_input_mode = None;
+                                                            ui.custom_w_str.clear();
+                                                            ui.custom_h_str.clear();
+                                                            ui.custom_n_str.clear();
+                                                            ui.custom_error_msg = None;
+                                                        } else {
+                                                            cfg.custom_w = w;
+                                                            cfg.custom_h = h;
+                                                            cfg.custom_n = n;
+                                                            cfg.difficulty =
+                                                                Difficulty::Custom(w, h, n);
+                                                            save_config(&cfg);
+                                                            game = Game::new(w, h, n);
+                                                            reset_ui_after_new_game(&mut game, &mut ui);
+                                                            ui.showing_difficulty = false;
+                                                            ui.custom_input_mode = None;
+                                                            ui.custom_w_str.clear();
+                                                            ui.custom_h_str.clear();
+                                                            ui.custom_n_str.clear();
+                                                            ui.custom_error_msg = None;
+                                                            ui.modal_rect = None;
+                                                            ui.modal_close_rect = None;
+                                                            ui.modal_close_pressed = false;
+                                                        }
                                                     }
                                                 }
                                             } else {
@@ -2050,6 +2411,7 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                                                     let was_win = ui.showing_win;
                                                     let was_loss = ui.showing_loss;
                                                     ui.showing_difficulty = false;
+                                                    ui.difficulty_hover = None;
                                                     ui.showing_about = false;
                                                     ui.showing_help = false;
                                                     ui.showing_record = false;
@@ -2085,6 +2447,7 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                                     let was_win = ui.showing_win;
                                     let was_loss = ui.showing_loss;
                                     ui.showing_difficulty = false;
+                                    ui.difficulty_hover = None;
                                     ui.showing_about = false;
                                     ui.showing_options = false;
                                     ui.showing_help = false;
@@ -2150,9 +2513,15 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                                                 match i {
                                                     0 => ui.showing_help = true,
                                                     1 => {
-                                                        let (w, h, m) = cfg.difficulty.params();
-                                                        game = Game::new(w, h, m);
-                                                        reset_ui_after_new_game(&mut game, &mut ui);
+                                                        // New game - check if game is in progress
+                                                        if game.started && game.game_over.is_none() {
+                                                            ui.showing_confirm = true;
+                                                            ui.confirm_type = Some(ConfirmType::New);
+                                                        } else {
+                                                            let (w, h, m) = cfg.difficulty.params();
+                                                            game = Game::new(w, h, m);
+                                                            reset_ui_after_new_game(&mut game, &mut ui);
+                                                        }
                                                     }
                                                     2 => ui.showing_record = true,
                                                     3 => {
@@ -2237,7 +2606,13 @@ pub fn run(cfg: &mut Config, lang: &mut Lang) -> Result<(), Box<dyn Error>> {
                                             if ui.exit_menu_item_down {
                                                 ui.exit_menu_item_down = false;
                                                 if me.column >= start_x && me.column <= end_x {
-                                                    exit_requested = true;
+                                                    // Check if game is in progress
+                                                    if game.started && game.game_over.is_none() {
+                                                        ui.showing_confirm = true;
+                                                        ui.confirm_type = Some(ConfirmType::Exit);
+                                                    } else {
+                                                        exit_requested = true;
+                                                    }
                                                 }
                                             }
                                         }
