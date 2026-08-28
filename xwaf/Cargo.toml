@@ -1,6 +1,6 @@
 ﻿[package]
 name = "xwaf"
-version = "1.0.17"
+version = "1.0.23"
 edition = "2024"
 authors = ["XHBL <newxhbl@hotmail.com>"]
 description = "A tool to eXecute Audio/Video transcoding With FFmpeg"
@@ -9,6 +9,12 @@ license = "MIT"
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+
+
+
+
+
 
 
 

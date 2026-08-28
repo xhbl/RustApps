@@ -18,6 +18,8 @@ struct Stream {
     codec_type: String,
     #[serde(rename = "codec_name")]
     codec_name: Option<String>,
+    #[serde(rename = "codec_long_name")]
+    codec_long_name: Option<String>,
     width: Option<u32>,
     height: Option<u32>,
     #[serde(rename = "pix_fmt")]
@@ -40,6 +42,12 @@ struct Stream {
     #[serde(rename = "color_transfer")]
     color_transfer: Option<String>,
     colorspace: Option<String>,
+    // Audio-only fields.
+    channels: Option<u32>,
+    #[serde(rename = "sample_rate")]
+    sample_rate: Option<String>,
+    #[serde(rename = "sample_fmt")]
+    sample_fmt: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -85,6 +93,25 @@ impl fmt::Display for FrameRate {
 
 // ─── Video info data structure (all numeric, ready for computation) ───
 
+/// Information for a single audio track.
+#[derive(Debug)]
+struct AudioInfo {
+    /// Short codec name (e.g. "aac").
+    codec: String,
+    /// Long codec name (e.g. "AAC (Advanced Audio Coding)").
+    codec_long: String,
+    /// Average bit rate in bits per second, if known.
+    bit_rate: Option<u64>,
+    /// Duration in seconds, if known.
+    duration: Option<f64>,
+    /// Number of channels (e.g. 2 for stereo), if known.
+    channels: Option<u32>,
+    /// Sample rate in Hz (e.g. 48000), if known.
+    sample_rate: Option<u32>,
+    /// Sample format (e.g. "fltp"), if known.
+    sample_fmt: Option<String>,
+}
+
 /// Aggregated video information. All numeric fields use exact numeric types
 /// so they can participate directly in further calculations; formatting is
 /// applied only at display time via the `Display` impl.
@@ -118,6 +145,8 @@ struct VideoInfo {
     duration: f64,
     /// Average bit rate in bits per second.
     bit_rate: u64,
+    /// All audio tracks, in stream order.
+    audio_tracks: Vec<AudioInfo>,
 }
 
 impl VideoInfo {
@@ -195,8 +224,55 @@ impl fmt::Display for VideoInfo {
             "Avg Bitrate",
             format_bitrate(self.bit_rate)
         )?;
+        write_audio_tracks(f, &self.audio_tracks)?;
         Ok(())
     }
+}
+
+/// Append one block per audio track (in stream order), or a single "none"
+/// line when the file carries no audio. Works with any [`fmt::Write`] sink so
+/// it also serves the pure-audio info display.
+fn write_audio_tracks(f: &mut impl fmt::Write, tracks: &[AudioInfo]) -> fmt::Result {
+    if tracks.is_empty() {
+        return writeln!(f, "{:<14}: none", "Audio");
+    }
+    for (i, track) in tracks.iter().enumerate() {
+        writeln!(f, "Audio Track {}:", i + 1)?;
+        writeln!(f, "  {:<14}: {}", "Format", track.codec)?;
+        writeln!(f, "  {:<14}: {}", "Encoding", track.codec_long)?;
+        match track.bit_rate {
+            Some(bps) => writeln!(f, "  {:<14}: {}", "Bitrate", format_bitrate(bps))?,
+            None => writeln!(f, "  {:<14}: unknown", "Bitrate")?,
+        }
+        // Duration is omitted entirely when the container reports none.
+        if let Some(d) = track.duration {
+            writeln!(f, "  {:<14}: {}", "Duration", format_duration(d))?;
+        }
+        match track.channels {
+            Some(c) => writeln!(f, "  {:<14}: {}", "Channels", c)?,
+            None => writeln!(f, "  {:<14}: unknown", "Channels")?,
+        }
+        match track.sample_rate {
+            Some(r) => writeln!(f, "  {:<14}: {} Hz", "Sample Rate", r)?,
+            None => writeln!(f, "  {:<14}: unknown", "Sample Rate")?,
+        }
+        writeln!(
+            f,
+            "  {:<14}: {}",
+            "Sample Format",
+            track.sample_fmt.as_deref().unwrap_or("unknown")
+        )?;
+    }
+    Ok(())
+}
+
+/// Print the audio tracks of a pure-audio file (no video stream present).
+fn print_audio_only(path: &str, tracks: &[AudioInfo]) {
+    use std::fmt::Write;
+    let mut buf = String::new();
+    writeln!(buf, "{:<14}: {}", "File", path).unwrap();
+    write_audio_tracks(&mut buf, tracks).unwrap();
+    println!("{buf}");
 }
 
 // ─── Formatting helpers (only used at display time) ───
@@ -378,6 +454,60 @@ fn infer_bit_depth(pix_fmt: &str) -> u8 {
     8 // default 8-bit
 }
 
+/// Collect all audio tracks from a probe result, in stream order.
+fn collect_audio_tracks(probe: &FfprobeOutput) -> Vec<AudioInfo> {
+    probe
+        .streams
+        .iter()
+        .filter(|s| s.codec_type == "audio")
+        .map(|s| AudioInfo {
+            codec: s.codec_name.clone().unwrap_or_else(|| "unknown".to_string()),
+            codec_long: s.codec_long_name.clone().unwrap_or_default(),
+            bit_rate: s.bit_rate.as_ref().and_then(|v| v.parse::<u64>().ok()),
+            // Many containers only report duration at the format level, so
+            // fall back to the file duration when the stream has none.
+            duration: s
+                .duration
+                .as_ref()
+                .and_then(|d| d.parse::<f64>().ok())
+                .or_else(|| {
+                    probe
+                        .format
+                        .duration
+                        .as_ref()
+                        .and_then(|d| d.parse::<f64>().ok())
+                }),
+            channels: s.channels,
+            sample_rate: s.sample_rate.as_ref().and_then(|r| r.parse::<u32>().ok()),
+            sample_fmt: s.sample_fmt.clone(),
+        })
+        .collect()
+}
+
+/// Probe just the audio tracks of a file (does not require a video stream, so
+/// it also works on pure audio files). Used by `--audiofile`.
+fn get_audio_tracks(path: &str) -> Result<Vec<AudioInfo>, Box<dyn std::error::Error>> {
+    let output = Command::new(resolve_binary("ffprobe"))
+        .args([
+            "-v",
+            "quiet",
+            "-print_format",
+            "json",
+            "-show_streams",
+            "-show_format",
+            path,
+        ])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("ffprobe execution failed: {}", stderr).into());
+    }
+
+    let probe: FfprobeOutput = serde_json::from_slice(&output.stdout)?;
+    Ok(collect_audio_tracks(&probe))
+}
+
 /// Invoke ffprobe to extract video information.
 fn get_video_info(path: &str) -> Result<VideoInfo, Box<dyn std::error::Error>> {
     let output = Command::new(resolve_binary("ffprobe"))
@@ -473,6 +603,9 @@ fn get_video_info(path: &str) -> Result<VideoInfo, Box<dyn std::error::Error>> {
         video_stream.sample_aspect_ratio.as_ref(),
     );
 
+    // All audio streams, in file order.
+    let audio_tracks = collect_audio_tracks(&probe);
+
     Ok(VideoInfo {
         codec,
         width,
@@ -488,6 +621,7 @@ fn get_video_info(path: &str) -> Result<VideoInfo, Box<dyn std::error::Error>> {
         total_frames,
         duration,
         bit_rate,
+        audio_tracks,
     })
 }
 
@@ -841,6 +975,15 @@ fn print_usage() {
     eprintln!("  -rc, --recode <kbps>     Re-encode 2-pass; requires --outfile.");
     eprintln!("  -ec, --encoder <name>    Encoder for --recode: x265 (default) or x264.");
     eprintln!("  -of, --outfile <path>    Output file for --recode (.mkv/.mp4/.hevc, or no dot = raw).");
+    eprintln!("  -af, --audiofile <path>  Export/re-encode audio: .ac3/.dts/.flac/.mp3/.aac/.m4a/.wav/.ogg/.opus.");
+    eprintln!("                          Channels >5.1 are downmixed to 5.1; when the source format and");
+    eprintln!("                          channels already match the target, the stream is copied as-is.");
+    eprintln!("  -at, --audiotrack <n>    Audio track to export with --audiofile (1-based, default 1).");
+    eprintln!("  -ac, --audiochannel <n>  Force the output channel count for --audiofile (1-8, e.g. 2, 6).");
+    eprintln!("  -ab, --audiobitrate <k>  Audio bitrate in kbps for --audiofile (per-format default when omitted).");
+    eprintln!("  -an, --audionormalize     Normalise peaks to -1 dB (volumedetect + volume) for --audiofile.");
+    eprintln!("  -al, --audioloudnorm      Normalise loudness (EBU R128 loudnorm, -16 LUFS) for --audiofile.");
+    eprintln!("  -as, --audiosample <khz>  Output sample rate for --audiofile (e.g. 44.1/48/96/192; ignored when equal to the source).");
     eprintln!("  -h, --help               Show this help message.");
     eprintln!();
     eprintln!("Hardware decoding is auto-detected in the emitted ffmpeg command via");
@@ -957,13 +1100,23 @@ fn run_ffmpeg_pipe(input_path: &str, vf: Option<&str>, fps: Option<FrameRate>) -
     std::process::exit(status.code().unwrap_or(1));
 }
 
-/// Derive the x265 2-pass stats file name: the output file name with its
-/// extension stripped, plus a `.stats` suffix. Handles both `output.mkv` and
-/// a raw `output` (no extension) uniformly.
+/// Derive the 2-pass stats file name from the output file, with its extension
+/// stripped plus a `.stats` suffix. Handles both `output.mkv` and a raw
+/// `output` (no extension) uniformly.
+///
+/// The stats path goes through `-x265-params`/`-x264-params`, which split
+/// options on `:` and treat backslashes as escapes, so Windows separators are
+/// converted to forward slashes and the drive letter is dropped (e.g.
+/// `D:\dy\MVS\…` → `/dy/MVS/…`). The root-relative path then resolves on the
+/// current drive, keeping the stats next to the output.
 fn stats_filename(outfile: &str) -> String {
-    match outfile.rfind('.') {
-        Some(pos) if pos > 0 => format!("{}.stats", &outfile[..pos]),
-        _ => format!("{outfile}.stats"),
+    let mut path = outfile.replace('\\', "/");
+    if let Some(pos) = path.find(':') {
+        path.drain(..=pos);
+    }
+    match path.rfind('.') {
+        Some(pos) if pos > 0 => format!("{}.stats", &path[..pos]),
+        _ => format!("{path}.stats"),
     }
 }
 
@@ -1024,6 +1177,280 @@ impl Encoder {
     fn is_x264(self) -> bool {
         matches!(self, Self::X264)
     }
+}
+
+// ─── Audio export (--audiofile) ───
+
+/// Map an output file extension to the ffmpeg encoder that produces it.
+/// Returns None for unsupported extensions.
+fn audio_encoder_for_ext(ext: &str) -> Option<&'static str> {
+    match ext.to_ascii_lowercase().as_str() {
+        "ac3" => Some("ac3"),
+        "dts" => Some("dts"),
+        "flac" => Some("flac"),
+        "mp3" => Some("libmp3lame"),
+        "aac" | "m4a" => Some("aac"),
+        "wav" => Some("pcm_s16le"),
+        "ogg" => Some("libvorbis"),
+        "opus" => Some("libopus"),
+        _ => None,
+    }
+}
+
+/// Default bitrate (kbps) applied when `--audiobitrate` is not given. Lossy
+/// formats scale with the output channel count (per-channel base × channels,
+/// clamped to a sane range); ac3/dts use their standard fixed values and the
+/// lossless formats (flac/wav) need none.
+fn default_audio_bitrate(ext: &str, channels: u32) -> Option<u32> {
+    let per_ch = match ext.to_ascii_lowercase().as_str() {
+        "ac3" => {
+            // AC-3 bitrate is a discrete set of standard values per channel
+            // count (e.g. 384 for stereo, 640 for 5.1).
+            return Some(match channels {
+                1 => 192,
+                2 => 384,
+                6 => 640,
+                _ => 448,
+            });
+        }
+        "dts" => return Some(1536),
+        "mp3" => 96,
+        "aac" | "m4a" | "ogg" => 64,
+        "opus" => 48,
+        _ => return None,
+    };
+    Some((per_ch * channels).clamp(64, 512))
+}
+
+/// Whether a source codec can be stream-copied into the requested output
+/// format without re-encoding (e.g. aac → .m4a).
+fn audio_copyable(codec: &str, ext: &str) -> bool {
+    let want = match ext.to_ascii_lowercase().as_str() {
+        "ac3" => "ac3",
+        "dts" => "dts",
+        "flac" => "flac",
+        "mp3" => "mp3",
+        "aac" | "m4a" => "aac",
+        "wav" => "pcm_s16le",
+        "ogg" => "vorbis",
+        "opus" => "opus",
+        _ => return false,
+    };
+    codec.eq_ignore_ascii_case(want)
+}
+
+/// Peak level the `--audionormalize` gain is referenced to (dBFS).
+const PEAK_TARGET_DB: f64 = -1.0;
+
+/// Measure the peak level of the selected audio track via ffmpeg's
+/// `volumedetect` filter and return the gain (dB) that brings the peak to
+/// [`PEAK_TARGET_DB`]. Prints the measurement command for transparency.
+fn measure_peak_gain(input: &str, map: &str) -> f64 {
+    let args: Vec<String> = vec![
+        "-hide_banner".to_string(),
+        "-i".to_string(),
+        input.to_string(),
+        "-map".to_string(),
+        map.to_string(),
+        "-af".to_string(),
+        "volumedetect".to_string(),
+        "-f".to_string(),
+        "null".to_string(),
+        "-".to_string(),
+    ];
+    eprintln!("  ffmpeg {}", shell_join(&args));
+    let output = match Command::new(resolve_binary("ffmpeg"))
+        .args(&args)
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .output()
+    {
+        Ok(o) => o,
+        Err(e) => fail(&format!("failed to launch ffmpeg (peak measurement): {e}")),
+    };
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !output.status.success() {
+        fail(&format!("ffmpeg peak measurement failed:\n{stderr}"));
+    }
+    let max_volume = stderr.lines().find_map(|line| {
+        let line = line.trim();
+        let rest = line.split_once("max_volume: ")?;
+        rest.1.trim_end_matches(" dB").trim().parse::<f64>().ok()
+    });
+    match max_volume {
+        Some(mv) => PEAK_TARGET_DB - mv,
+        None => fail("failed to parse ffmpeg peak measurement output"),
+    }
+}
+
+/// Parameters for one `--audiofile` export, bundled so [`run_audio_extract`]
+/// stays below clippy's argument-count limit.
+struct AudioRequest<'a> {
+    input: &'a str,
+    outfile: &'a str,
+    track: u32,
+    channel: Option<u32>,
+    bitrate: Option<u32>,
+    /// Output sample rate in Hz, if requested (None keeps the source rate).
+    sample: Option<u32>,
+    normalize: bool,
+    loudnorm: bool,
+    tracks: &'a [AudioInfo],
+}
+
+/// Extract or re-encode the selected audio track (1-based) to `outfile`.
+/// Channels above 5.1 are downmixed to 5.1 unless `channel` forces a specific
+/// count; when the source codec and channel layout already match the target
+/// and no bitrate/normalisation was requested, the stream is copied without
+/// re-encoding. `normalize` applies peak normalisation to -1 dB (measured via
+/// volumedetect, applied via volume); `loudnorm` applies EBU R128 loudness
+/// normalisation (target -16 LUFS). Exits with ffmpeg's status.
+fn run_audio_extract(req: AudioRequest) -> ! {
+    let AudioRequest { input, outfile, track, channel, bitrate, sample, normalize, loudnorm, tracks } = req;
+    let sel = match tracks.get(track as usize - 1) {
+        Some(t) => t,
+        None => fail(&format!(
+            "audio track {track} not found (the source has {} audio track(s))",
+            tracks.len()
+        )),
+    };
+    let ext = match std::path::Path::new(outfile).extension() {
+        Some(e) => e.to_string_lossy().to_string(),
+        None => fail("--audiofile needs a format extension (e.g. .ac3, .flac, .mp3)"),
+    };
+    let Some(enc) = audio_encoder_for_ext(&ext) else {
+        fail(&format!("unsupported audio output format '.{ext}'"));
+    };
+
+    // Target channel count: an explicit --audiochannel wins; otherwise sources
+    // above 5.1 (6 channels) are downmixed to 5.1 and everything else is kept.
+    let src_ch = sel.channels;
+    let dst_ch = match (channel, src_ch) {
+        (Some(n), _) => Some(n),
+        (None, Some(c)) if c > 6 => Some(6),
+        _ => None,
+    };
+    // Re-encode when the format differs or the channel count must change.
+    let need_ac = match (channel, src_ch) {
+        (Some(n), Some(c)) => n != c,
+        (Some(_), None) => true,
+        (None, Some(c)) => c > 6,
+        (None, None) => false,
+    };
+    // A requested sample rate that differs from the source (or a source whose
+    // rate is unknown) forces a re-encode; a matching rate is simply ignored.
+    let need_ar = match (sample, sel.sample_rate) {
+        (Some(hz), Some(r)) => hz != r,
+        (Some(_), None) => true,
+        (None, _) => false,
+    };
+    // Re-encode when the format differs, the channel/sample count must change,
+    // or a target bitrate/sample/normalisation was requested (so `-ab`/`-as`/
+    // `-an`/`-al` always take effect); otherwise the stream is copied into the
+    // container as-is.
+    let copy = audio_copyable(&sel.codec, &ext)
+        && !need_ac
+        && !need_ar
+        && bitrate.is_none()
+        && !normalize
+        && !loudnorm;
+
+    let mut args: Vec<String> = vec![
+        "-hide_banner".to_string(),
+        "-loglevel".to_string(),
+        "error".to_string(),
+        // Force periodic `size=… time=…` progress even when stderr is a pipe.
+        "-stats".to_string(),
+        "-y".to_string(),
+        "-i".to_string(),
+        input.to_string(),
+        // The selected audio track only (1-based); video is dropped.
+        "-map".to_string(),
+        format!("0:a:{}", track - 1),
+        "-vn".to_string(),
+    ];
+    if copy {
+        // `-ab` is guaranteed absent here, so copying is always lossless.
+        args.push("-c:a".to_string());
+        args.push("copy".to_string());
+    } else {
+        // Peak normalisation to -1 dB: measure the source peak (volumedetect)
+        // first, then apply the compensating gain with the volume filter.
+        if normalize {
+            let map = format!("0:a:{}", track - 1);
+            let gain = measure_peak_gain(input, &map);
+            eprintln!("  peak normalisation: {gain:+.1} dB -> {PEAK_TARGET_DB:.1} dBFS");
+            args.push("-af".to_string());
+            args.push(format!("volume={gain:.1}dB"));
+        }
+        // EBU R128 loudness normalisation to -16 LUFS (single-pass loudnorm).
+        if loudnorm {
+            args.push("-af".to_string());
+            args.push("loudnorm=I=-16:TP=-1.5:LRA=11".to_string());
+        }
+        // Resample when the requested rate differs from the source.
+        if need_ar && let Some(hz) = sample {
+            args.push("-ar".to_string());
+            args.push(hz.to_string());
+        }
+        args.push("-c:a".to_string());
+        args.push(enc.to_string());
+        // ffmpeg's 'dca' (DTS) encoder is marked experimental and requires
+        // `-strict -2` to be accepted.
+        if enc == "dts" {
+            args.push("-strict".to_string());
+            args.push("-2".to_string());
+        }
+        // The bitrate default scales with the actual output channel count
+        // (the downmix target, or the source when channels are kept).
+        let out_ch = dst_ch.or(src_ch).unwrap_or(2);
+        if let Some(bps) = bitrate.or_else(|| default_audio_bitrate(&ext, out_ch)) {
+            args.push("-b:a".to_string());
+            args.push(format!("{bps}k"));
+        }
+        if let Some(n) = dst_ch {
+            args.push("-ac".to_string());
+            args.push(n.to_string());
+        } else if enc == "libopus" {
+            // libopus rejects non-standard layouts such as 5.1(side) that some
+            // decoders (e.g. AC-3) yield. Re-stating the channel count forces
+            // the standard layout without changing the channel count.
+            if let Some(c) = src_ch {
+                args.push("-ac".to_string());
+                args.push(c.to_string());
+            }
+        }
+    }
+    args.push(outfile.to_string());
+
+    eprintln!("  ffmpeg {}", shell_join(&args));
+    let mut child = match Command::new(resolve_binary("ffmpeg"))
+        .args(&args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => fail(&format!("failed to launch ffmpeg: {e}")),
+    };
+    if let Some(Err(e)) = child
+        .stderr
+        .take()
+        .map(|stderr| drain_audio_stderr(stderr, sel.duration))
+    {
+        let _ = child.kill();
+        fail(&format!("failed to read ffmpeg output: {e}"));
+    }
+    let status = match child.wait() {
+        Ok(s) => s,
+        Err(e) => fail(&format!("failed to wait for ffmpeg: {e}")),
+    };
+    if !status.success() {
+        std::process::exit(status.code().unwrap_or(1));
+    }
+    eprintln!("audio complete: {outfile}");
+    std::process::exit(0);
 }
 
 /// Build the `-x265-params` value for a given 2-pass libx265 encode. Common
@@ -1473,23 +1900,17 @@ fn write_record(
     Ok(())
 }
 
-/// Read a child process's stderr to EOF and forward it to our stderr through
-/// [`write_record`], keeping only the encoder's own output (x265/x264 banner),
-/// progress, and video-relevant error lines. Used by [`run_recode`] on the
-/// encoder side of the pipeline.
-///
-/// Progress updates are separated by carriage returns (`\r`) so they overwrite
-/// one another in-place on a terminal; they are detected here (distinguishing a
-/// lone `\r` from a CRLF `\r\n` line ending) and written as in-place `\r`
-/// updates rather than one newline per update.
-fn drain_filtered_stderr(
+/// Read a child process's stderr byte-by-byte, split it into records on `\n`
+/// and `\r` (distinguishing a lone `\r` progress separator from CRLF), and
+/// hand each record to `on_record` with its line-ending flag. Shared by the
+/// video ([`drain_filtered_stderr`]) and audio ([`drain_audio_stderr`]) paths.
+fn drain_stderr_records(
     stderr: std::process::ChildStderr,
-    total_frames: u64,
+    mut on_record: impl FnMut(&[u8], bool) -> std::io::Result<()>,
 ) -> std::io::Result<()> {
-    use std::io::{BufReader, Read, Write};
+    use std::io::{BufReader, Read};
 
     let mut reader = BufReader::new(stderr);
-    let mut out = std::io::stderr();
     let mut record: Vec<u8> = Vec::new();
     let mut byte = [0u8; 1];
 
@@ -1504,7 +1925,7 @@ fn drain_filtered_stderr(
         }
         match byte[0] {
             b'\n' => {
-                write_record(&record, &mut out, true, total_frames)?;
+                on_record(&record, true)?;
                 record.clear();
             }
             b'\r' => {
@@ -1514,14 +1935,14 @@ fn drain_filtered_stderr(
                 let peeked = reader.read(&mut next).unwrap_or_default();
                 if peeked == 0 {
                     // Trailing `\r` at end of stream.
-                    write_record(&record, &mut out, true, total_frames)?;
+                    on_record(&record, true)?;
                     record.clear();
                     break;
                 } else if next[0] == b'\n' {
-                    write_record(&record, &mut out, true, total_frames)?;
+                    on_record(&record, true)?;
                     record.clear();
                 } else {
-                    write_record(&record, &mut out, false, total_frames)?;
+                    on_record(&record, false)?;
                     record.clear();
                     record.push(next[0]);
                 }
@@ -1531,10 +1952,120 @@ fn drain_filtered_stderr(
     }
 
     if !record.is_empty() {
-        write_record(&record, &mut out, true, total_frames)?;
+        on_record(&record, true)?;
     }
+    Ok(())
+}
+
+/// Read a child process's stderr to EOF and forward it to our stderr through
+/// [`write_record`], keeping only the encoder's own output (x265/x264 banner),
+/// progress, and video-relevant error lines. Used by [`run_recode`] on the
+/// encoder side of the pipeline.
+fn drain_filtered_stderr(
+    stderr: std::process::ChildStderr,
+    total_frames: u64,
+) -> std::io::Result<()> {
+    let mut out = std::io::stderr();
+    drain_stderr_records(stderr, |record, line_end| {
+        write_record(record, &mut out, line_end, total_frames)
+    })
+}
+
+/// Reformat an ffmpeg audio `-stats` progress line (`size=… time=… bitrate=…
+/// speed=…`) into the compact xwaf form using the track duration:
+///   `[12.3%] 00:00:08 / 00:01:05, 4.5x, 128.00 kbits/s`
+/// Returns `None` when the line is not an audio progress line.
+fn reformat_audio_progress(text: &str, duration: Option<f64>) -> Option<String> {
+    let t = text.trim_start();
+    if !t.starts_with("size=") {
+        return None;
+    }
+    let mut secs: Option<f64> = None;
+    let mut speed: Option<String> = None;
+    let mut bitrate: Option<String> = None;
+    let mut tokens = t.split_whitespace();
+    while let Some(tok) = tokens.next() {
+        let Some((k, raw)) = tok.split_once('=') else {
+            continue;
+        };
+        // ffmpeg right-aligns values, so a token like `bitrate=` or `speed=`
+        // has an empty value and the real value is the next token.
+        let v = if raw.is_empty() {
+            tokens.next().unwrap_or("")
+        } else {
+            raw
+        };
+        match k {
+            "time" => secs = parse_ffmpeg_time(v),
+            "speed" => speed = Some(v.trim_end_matches('x').to_string()),
+            "bitrate" => {
+                let b = v.trim_end_matches("kbits/s").trim();
+                if b != "N/A" {
+                    bitrate = Some(b.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    let secs = secs?;
+    let total = duration.unwrap_or(0.0);
+    let pct = if total > 0.0 { secs * 100.0 / total } else { 0.0 };
+    let spd = speed.map(|s| format!(", {s}x")).unwrap_or_default();
+    let rate = bitrate.map(|b| format!(", {b} kbits/s")).unwrap_or_default();
+    Some(format!(
+        "[{pct:.1}%] {} / {}{spd}{rate}",
+        format_duration(secs),
+        format_duration(total)
+    ))
+}
+
+/// Parse ffmpeg's `HH:MM:SS.mmm` timestamps (e.g. `00:00:05.03`) to seconds.
+fn parse_ffmpeg_time(s: &str) -> Option<f64> {
+    let mut parts = s.split(':');
+    let h: f64 = parts.next()?.parse().ok()?;
+    let m: f64 = parts.next()?.parse().ok()?;
+    let sec: f64 = parts.next()?.parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some(h * 3600.0 + m * 60.0 + sec)
+}
+
+/// Write one decoded stderr record of an audio export: progress lines are
+/// reformatted via [`reformat_audio_progress`], everything else (errors, since
+/// the encode runs with `-loglevel error`) is forwarded as-is.
+fn write_audio_record(
+    record: &[u8],
+    out: &mut std::io::Stderr,
+    line_end: bool,
+    duration: Option<f64>,
+) -> std::io::Result<()> {
+    use std::io::Write;
+
+    let text = String::from_utf8_lossy(record);
+    if text.is_empty() {
+        return Ok(());
+    }
+    let terminator: &[u8] = if line_end { b"\n" } else { b"\r" };
+    if let Some(formatted) = reformat_audio_progress(&text, duration) {
+        out.write_all(formatted.as_bytes())?;
+    } else {
+        out.write_all(record)?;
+    }
+    out.write_all(terminator)?;
     out.flush()?;
     Ok(())
+}
+
+/// Drain the stderr of an audio export ffmpeg process (progress + errors).
+fn drain_audio_stderr(
+    stderr: std::process::ChildStderr,
+    duration: Option<f64>,
+) -> std::io::Result<()> {
+    let mut out = std::io::stderr();
+    drain_stderr_records(stderr, |record, line_end| {
+        write_audio_record(record, &mut out, line_end, duration)
+    })
 }
 
 /// Detect (cached, once per run) whether the `mpv` player is available on PATH.
@@ -1609,6 +2140,13 @@ fn main() {
     let mut recode: Option<u32> = None;
     let mut outfile: Option<String> = None;
     let mut encoder = Encoder::X265;
+    let mut audiofile: Option<String> = None;
+    let mut audio_track: Option<u32> = None;
+    let mut audio_channel: Option<u32> = None;
+    let mut audio_bitrate: Option<u32> = None;
+    let mut audio_sample: Option<u32> = None;
+    let mut audio_normalize = false;
+    let mut audio_loudnorm = false;
     let mut positional = Vec::new();
 
     let mut i = 1;
@@ -1679,6 +2217,59 @@ fn main() {
                     )),
                 }
             }
+            "-af" | "--audiofile" => {
+                let val = require_arg(
+                    &args,
+                    &mut i,
+                    "--audiofile",
+                    "an output file (e.g. out.ac3, out.flac, out.mp3)",
+                );
+                audiofile = Some(val);
+            }
+            "-at" | "--audiotrack" => {
+                let val = require_arg(&args, &mut i, "--audiotrack", "a track number (e.g. 2)");
+                match val.parse::<u32>() {
+                    Ok(n) if n > 0 => audio_track = Some(n),
+                    _ => fail(&format!("invalid --audiotrack '{}' (expected a positive integer)", val)),
+                }
+            }
+            "-ac" | "--audiochannel" => {
+                let val = require_arg(&args, &mut i, "--audiochannel", "a channel count (e.g. 2, 6)");
+                match val.parse::<u32>() {
+                    Ok(n) if (1..=8).contains(&n) => audio_channel = Some(n),
+                    _ => fail(&format!("invalid --audiochannel '{}' (expected 1-8)", val)),
+                }
+            }
+            "-ab" | "--audiobitrate" => {
+                let val =
+                    require_arg(&args, &mut i, "--audiobitrate", "a bitrate in kbps (e.g. 192)");
+                match val.parse::<u32>() {
+                    Ok(n) if n > 0 => audio_bitrate = Some(n),
+                    _ => fail(&format!(
+                        "invalid --audiobitrate '{}' (expected a positive integer kbps)",
+                        val
+                    )),
+                }
+            }
+            "-an" | "--audionormalize" => audio_normalize = true,
+            "-al" | "--audioloudnorm" => audio_loudnorm = true,
+            "-as" | "--audiosample" => {
+                let val = require_arg(
+                    &args,
+                    &mut i,
+                    "--audiosample",
+                    "a sample rate in kHz (e.g. 44.1, 48, 96, 192)",
+                );
+                match val.parse::<f64>() {
+                    Ok(khz) if khz > 0.0 && khz <= 768.0 => {
+                        audio_sample = Some((khz * 1000.0).round() as u32);
+                    }
+                    _ => fail(&format!(
+                        "invalid --audiosample '{}' (expected kHz, e.g. 44.1, 48, 96, 192)",
+                        val
+                    )),
+                }
+            }
             "-h" | "--help" => {
                 print_usage();
                 return;
@@ -1699,6 +2290,46 @@ fn main() {
     }
     if outpipe && recode.is_some() {
         fail("--outpipe and --recode are mutually exclusive");
+    }
+    if audiofile.is_some() && (outpipe || recode.is_some() || play) {
+        fail("--audiofile cannot be combined with --outpipe/--recode/--playpreview");
+    }
+    if (audio_track.is_some() || audio_channel.is_some() || audio_bitrate.is_some())
+        && audiofile.is_none()
+    {
+        fail("--audiotrack/--audiochannel/--audiobitrate require --audiofile");
+    }
+    if audio_sample.is_some() && audiofile.is_none() {
+        fail("--audiosample requires --audiofile");
+    }
+    if (audio_normalize || audio_loudnorm) && audiofile.is_none() {
+        fail("--audionormalize/--audioloudnorm require --audiofile");
+    }
+    if audio_normalize && audio_loudnorm {
+        fail("--audionormalize and --audioloudnorm are mutually exclusive");
+    }
+
+    if let Some(af) = audiofile {
+        // Audio export is a standalone action: probe the source's audio tracks
+        // (no video stream required), then run the extract/re-encode and exit.
+        let tracks = match get_audio_tracks(&positional[0]) {
+            Ok(tracks) => tracks,
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        };
+        run_audio_extract(AudioRequest {
+            input: &positional[0],
+            outfile: &af,
+            track: audio_track.unwrap_or(1),
+            channel: audio_channel,
+            bitrate: audio_bitrate,
+            sample: audio_sample,
+            normalize: audio_normalize,
+            loudnorm: audio_loudnorm,
+            tracks: &tracks,
+        });
     }
 
     if rescale.is_some() || letterbox || pillarbox || setfps.is_some() || play || outpipe || recode.is_some() {
@@ -1827,6 +2458,14 @@ fn main() {
     match get_video_info(path) {
         Ok(info) => println!("{}", info),
         Err(e) => {
+            // Pure-audio inputs have no video stream; show their audio tracks
+            // instead of failing.
+            if let Ok(tracks) = get_audio_tracks(path)
+                && !tracks.is_empty()
+            {
+                print_audio_only(path, &tracks);
+                return;
+            }
             eprintln!("Error: {}", e);
             std::process::exit(1);
         }

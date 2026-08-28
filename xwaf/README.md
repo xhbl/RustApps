@@ -56,7 +56,9 @@ xwaf [options] <video file path>
 
 With no preprocessing options, `xwaf` prints detailed information about the
 video stream (codec, resolution, pixel format, bit depth, HDR/SDR, frame rate,
-duration, bitrate).
+duration, bitrate) followed by every audio track. Pure-audio files (e.g. `.mp3`,
+`.flac`, `.m4a`) are also accepted: they show their audio tracks, and
+`--audiofile` can transcode them directly.
 
 ### Options
 
@@ -71,11 +73,21 @@ duration, bitrate).
 | `-rc, --recode <kbps>` | 2-pass re-encode; requires `--outfile`. |
 | `-ec, --encoder <name>` | Encoder for `--recode`: `x265` (default) or `x264`. |
 | `-of, --outfile <path>` | Output file for `--recode` (`.mkv`/`.mp4`/`.hevc`, or no dot = raw elementary stream). |
+| `-af, --audiofile <path>` | Export/re-encode audio: `.ac3`/`.dts`/`.flac`/`.mp3`/`.aac`/`.m4a`/`.wav`/`.ogg`/`.opus`. Channels above 5.1 are downmixed to 5.1; when the source format and channels already match the target and no `--audiobitrate` is given, the stream is copied without re-encoding (specifying `--audiobitrate` forces a re-encode so the bitrate takes effect). |
+| `-at, --audiotrack <n>` | Audio track to export with `--audiofile` (1-based, default 1). |
+| `-ac, --audiochannel <n>` | Force the output channel count for `--audiofile` (1-8, e.g. `2`, `6`). |
+| `-ab, --audiobitrate <k>` | Audio bitrate in kbps for `--audiofile` (default when omitted: ac3 by channel count — 192/384/448/640 for 1/2/3-5/6ch; dts 1536; mp3/aac/m4a/ogg/opus scale with the channel count — per-channel base × channels, 96/64/64/64/48 kbps/ch respectively, clamped to 64-512; flac/wav are lossless and need none). |
+| `-an, --audionormalize` | Normalise peaks to -1 dB for `--audiofile` (measures the source with `volumedetect`, then applies `volume`). Forces a re-encode even when the stream would otherwise be copied. |
+| `-al, --audioloudnorm` | Normalise loudness for `--audiofile` (EBU R128 `loudnorm`, target -16 LUFS). Forces a re-encode even when the stream would otherwise be copied. Mutually exclusive with `--audionormalize`. |
+| `-as, --audiosample <khz>` | Output sample rate in kHz for `--audiofile` (e.g. `44.1`/`48`/`96`/`192`). Ignored when it equals the source rate; otherwise resamples (forces a re-encode). Default keeps the source rate. |
 | `-h, --help` | Show help. |
 
 Constraints: `--letterbox`/`--pillarbox` require `--rescale`; `--recode` and
 `--outfile` must be used together; `--outpipe` and `--recode` are mutually
-exclusive.
+exclusive; `--audiofile` cannot be combined with `--outpipe`/`--recode`/
+`--playpreview`, and `--audiotrack`/`--audiochannel`/`--audiobitrate`/
+`--audiosample`/`--audionormalize`/`--audioloudnorm` require `--audiofile`;
+`--audionormalize` and `--audioloudnorm` are mutually exclusive.
 
 ### Examples
 
@@ -108,6 +120,19 @@ xwaf -rc 3000 -of out.mkv video.mkv
 
 ```sh
 xwaf -ec x264 -sf 29.97 -rc 1500 -of out.mp4 video.mkv
+```
+
+Export the first audio track as 5.1 AC-3 (7.1 sources are downmixed; default
+448 kbps):
+
+```sh
+xwaf -af out.ac3 video.mkv
+```
+
+Export as stereo AAC at 128 kbps, forcing the channel count:
+
+```sh
+xwaf -af out.aac -ac 2 -ab 128 video.mkv
 ```
 
 ## How it works
