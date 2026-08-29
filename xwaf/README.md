@@ -73,7 +73,7 @@ duration, bitrate) followed by every audio track. Pure-audio files (e.g. `.mp3`,
 | `-rc, --recode <kbps>` | 2-pass re-encode; requires `--outfile`. |
 | `-ec, --encoder <name>` | Encoder for `--recode`: `x265` (default) or `x264`. |
 | `-of, --outfile <path>` | Output file for `--recode` (`.mkv`/`.mp4`/`.hevc`, or no dot = raw elementary stream). |
-| `-avs, --avscript <path>` | Generate an AviSynth script (`FFVideoSource` via ffms2) that reproduces the `-rs`/`-lb`/`-pb`/`-sf` preprocessing and HDR→SDR — exact-rational `AssumeFPS` retime (incl. automatic VFR→CFR), `LanczosResize` scale, `AddBorders` bars, `z_ConvertFormat`+`DGHable` tone mapping for HDR sources (avsresize/DGTonemap), and `ConvertToYV12` (YUV 4:2:0). Written silently to the file; may be combined with `--recode`. |
+| `-avs, --avscript <path>` | Generate an AviSynth script (`DirectShowSource`, built-in) that reproduces the `-rs`/`-lb`/`-pb`/`-sf` preprocessing and HDR→SDR — exact-rational `AssumeFPS` retime (incl. automatic VFR→CFR), `LanczosResize` scale, `AddBorders` bars, `z_ConvertFormat`+`DGHable` tone mapping for HDR sources (avsresize/DGTonemap), and `ConvertToYV12` (YUV 4:2:0). Written silently to the file; may be combined with `--recode`. |
 | `-af, --audiofile <path>` | Export/re-encode audio: `.ac3`/`.dts`/`.flac`/`.mp3`/`.aac`/`.m4a`/`.wav`/`.ogg`/`.opus`. Channels above 5.1 are downmixed to 5.1; when the source format and channels already match the target and no `--audiobitrate` is given, the stream is copied without re-encoding (specifying `--audiobitrate` forces a re-encode so the bitrate takes effect). |
 | `-at, --audiotrack <n>` | Audio track to export with `--audiofile` (1-based, default 1). |
 | `-ac, --audiochannel <n>` | Force the output channel count for `--audiofile` (1-8, e.g. `2`, `6`). |
@@ -81,13 +81,14 @@ duration, bitrate) followed by every audio track. Pure-audio files (e.g. `.mp3`,
 | `-an, --audionormalize` | Normalise peaks to -1 dB for `--audiofile` (measures the source with `volumedetect`, then applies `volume`). Forces a re-encode even when the stream would otherwise be copied. |
 | `-al, --audioloudnorm` | Normalise loudness for `--audiofile` (EBU R128 `loudnorm`, target -16 LUFS). Forces a re-encode even when the stream would otherwise be copied. Mutually exclusive with `--audionormalize`. |
 | `-as, --audiosample <khz>` | Output sample rate in kHz for `--audiofile` (e.g. `44.1`/`48`/`96`/`192`). Ignored when it equals the source rate; otherwise resamples (forces a re-encode). Default keeps the source rate. |
+| `-ap, --audiotempo <x>` | Pitch-preserving speed change for `--audiofile` (0.5-100.0, same as ffmpeg `atempo`; e.g. `0.75` slower, `1.5` faster, `3/2` fraction accepted; `1.0` = unchanged). Runs as the last audio filter; forces a re-encode. |
 | `-h, --help` | Show help. |
 
 Constraints: `--letterbox`/`--pillarbox` require `--rescale`; `--recode` and
 `--outfile` must be used together; `--outpipe` and `--recode` are mutually
 exclusive; `--audiofile` cannot be combined with `--outpipe`/`--recode`/
 `--playpreview`, and `--audiotrack`/`--audiochannel`/`--audiobitrate`/
-`--audiosample`/`--audionormalize`/`--audioloudnorm` require `--audiofile`;
+`--audiosample`/`--audiotempo`/`--audionormalize`/`--audioloudnorm` require `--audiofile`;
 `--audionormalize` and `--audioloudnorm` are mutually exclusive; `--avscript`
 cannot be combined with `--outpipe`/`--playpreview`/`--audiofile`, but may be
 combined with `--recode` (the script is written silently before the encode).
