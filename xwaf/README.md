@@ -73,6 +73,7 @@ duration, bitrate) followed by every audio track. Pure-audio files (e.g. `.mp3`,
 | `-rc, --recode <kbps>` | 2-pass re-encode; requires `--outfile`. |
 | `-ec, --encoder <name>` | Encoder for `--recode`: `x265` (default) or `x264`. |
 | `-of, --outfile <path>` | Output file for `--recode` (`.mkv`/`.mp4`/`.hevc`, or no dot = raw elementary stream). |
+| `-avs, --avscript <path>` | Generate an AviSynth script (`FFVideoSource` via ffms2) that reproduces the `-rs`/`-lb`/`-pb`/`-sf` preprocessing and HDR→SDR — exact-rational `AssumeFPS` retime (incl. automatic VFR→CFR), `LanczosResize` scale, `AddBorders` bars, `z_ConvertFormat`+`DGHable` tone mapping for HDR sources (avsresize/DGTonemap), and `ConvertToYV12` (YUV 4:2:0). Written silently to the file; may be combined with `--recode`. |
 | `-af, --audiofile <path>` | Export/re-encode audio: `.ac3`/`.dts`/`.flac`/`.mp3`/`.aac`/`.m4a`/`.wav`/`.ogg`/`.opus`. Channels above 5.1 are downmixed to 5.1; when the source format and channels already match the target and no `--audiobitrate` is given, the stream is copied without re-encoding (specifying `--audiobitrate` forces a re-encode so the bitrate takes effect). |
 | `-at, --audiotrack <n>` | Audio track to export with `--audiofile` (1-based, default 1). |
 | `-ac, --audiochannel <n>` | Force the output channel count for `--audiofile` (1-8, e.g. `2`, `6`). |
@@ -87,7 +88,9 @@ Constraints: `--letterbox`/`--pillarbox` require `--rescale`; `--recode` and
 exclusive; `--audiofile` cannot be combined with `--outpipe`/`--recode`/
 `--playpreview`, and `--audiotrack`/`--audiochannel`/`--audiobitrate`/
 `--audiosample`/`--audionormalize`/`--audioloudnorm` require `--audiofile`;
-`--audionormalize` and `--audioloudnorm` are mutually exclusive.
+`--audionormalize` and `--audioloudnorm` are mutually exclusive; `--avscript`
+cannot be combined with `--outpipe`/`--playpreview`/`--audiofile`, but may be
+combined with `--recode` (the script is written silently before the encode).
 
 ### Examples
 
@@ -133,6 +136,13 @@ Export as stereo AAC at 128 kbps, forcing the channel count:
 
 ```sh
 xwaf -af out.aac -ac 2 -ab 128 video.mkv
+```
+
+Generate an AviSynth script that reproduces the 720p letterbox + 24 fps
+preprocessing (open it in AviSynth/VirtualDub etc.):
+
+```sh
+xwaf -avs out.avs -rs 720p -lb -sf 24 video.mkv
 ```
 
 ## How it works
