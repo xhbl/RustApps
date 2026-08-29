@@ -10,6 +10,7 @@ The applications in this project are cross-platform. Windows binaries are availa
 | App Name | Description | Latest Version |
 |-----------|-------------|----------------|
 | [xtswpr](xtswpr) | A terminal-based classic Minesweeper game | [v1.3.36](xtswpr/target/release/xtswpr.exe?raw=true) |
+| [xwaf](xwaf) | A tool to eXecute Audio/Video transcoding With FFmpeg | [v1.0.29](xwaf/target/release/xwaf.exe?raw=true) |
 
 ---
 
