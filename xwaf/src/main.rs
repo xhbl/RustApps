@@ -1079,7 +1079,7 @@ fn print_usage() {
     eprintln!("  -rc, --recode <kbps>     Re-encode 2-pass; requires --outfile.");
     eprintln!("  -ec, --encoder <name>    Encoder for --recode: x265 (default) or x264.");
     eprintln!("  -of, --outfile <path>    Output file for --recode (.mkv/.mp4/.hevc, or no dot = raw).");
-    eprintln!("  -avs, --avscript <path>  Generate an AviSynth script (FFVideoSource) reproducing the");
+    eprintln!("  -avs, --avscript <path>  Generate an AviSynth script (DirectShowSource) reproducing the");
     eprintln!("                          -rs/-lb/-pb/-sf + HDR→SDR preprocessing, written silently to the");
     eprintln!("                          file (may be combined with --recode).");
     eprintln!("  -af, --audiofile <path>  Export/re-encode audio: .ac3/.dts/.flac/.mp3/.aac/.m4a/.wav/.ogg/.opus.");
@@ -1090,7 +1090,8 @@ fn print_usage() {
     eprintln!("  -ab, --audiobitrate <k>  Audio bitrate in kbps for --audiofile (per-format default when omitted).");
     eprintln!("  -an, --audionormalize     Normalise peaks to -1 dB (volumedetect + volume) for --audiofile.");
     eprintln!("  -al, --audioloudnorm      Normalise loudness (EBU R128 loudnorm, -16 LUFS) for --audiofile.");
-    eprintln!("  -as, --audiosample <khz>  Output sample rate for --audiofile (e.g. 44.1/48/96/192; ignored when equal to the source).");
+    eprintln!("  -as, --audiosample <khz>  Output sample rate for --audiofile (e.g. 44.1/48/96/192);");
+    eprintln!("                          always resamples (-ar), even when equal to the source.");
     eprintln!("  -ap, --audiotempo <x>     Pitch-preserving speed change for --audiofile (0.5-100.0, same as");
     eprintln!("                          ffmpeg atempo; decimals or fractions accepted (1.5, 3/2, 24/23.976);");
     eprintln!("                          e.g. 0.75 slower, 1.5 faster; 1.0 = unchanged).");
@@ -1467,20 +1468,13 @@ fn run_audio_extract(req: AudioRequest) -> ! {
         (None, Some(c)) => c > 6,
         (None, None) => false,
     };
-    // A requested sample rate that differs from the source (or a source whose
-    // rate is unknown) forces a re-encode; a matching rate is simply ignored.
-    let need_ar = match (sample, sel.sample_rate) {
-        (Some(hz), Some(r)) => hz != r,
-        (Some(_), None) => true,
-        (None, _) => false,
-    };
     // Re-encode when the format differs, the channel/sample count must change,
     // or a target bitrate/sample/normalisation was requested (so `-ab`/`-as`/
     // `-an`/`-al` always take effect); otherwise the stream is copied into the
     // container as-is.
     let copy = audio_copyable(&sel.codec, &ext)
         && !need_ac
-        && !need_ar
+        && sample.is_none()
         && bitrate.is_none()
         && tempo == 1.0
         && !normalize
@@ -1529,8 +1523,9 @@ fn run_audio_extract(req: AudioRequest) -> ! {
             args.push("-af".to_string());
             args.push(filters.join(","));
         }
-        // Resample when the requested rate differs from the source.
-        if need_ar && let Some(hz) = sample {
+        // --audiosample always emits -ar, even when it equals the source rate,
+        // so the requested rate is explicit in the command.
+        if let Some(hz) = sample {
             args.push("-ar".to_string());
             args.push(hz.to_string());
         }

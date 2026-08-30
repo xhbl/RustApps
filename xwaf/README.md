@@ -80,7 +80,7 @@ duration, bitrate) followed by every audio track. Pure-audio files (e.g. `.mp3`,
 | `-ab, --audiobitrate <k>` | Audio bitrate in kbps for `--audiofile` (default when omitted: ac3 by channel count — 192/384/448/640 for 1/2/3-5/6ch; dts 1536; mp3/aac/m4a/ogg/opus scale with the channel count — per-channel base × channels, 96/64/64/64/48 kbps/ch respectively, clamped to 64-512; flac/wav are lossless and need none). |
 | `-an, --audionormalize` | Normalise peaks to -1 dB for `--audiofile` (measures the source with `volumedetect`, then applies `volume`). Forces a re-encode even when the stream would otherwise be copied. |
 | `-al, --audioloudnorm` | Normalise loudness for `--audiofile` (EBU R128 `loudnorm`, target -16 LUFS). Forces a re-encode even when the stream would otherwise be copied. Mutually exclusive with `--audionormalize`. |
-| `-as, --audiosample <khz>` | Output sample rate in kHz for `--audiofile` (e.g. `44.1`/`48`/`96`/`192`). Ignored when it equals the source rate; otherwise resamples (forces a re-encode). Default keeps the source rate. |
+| `-as, --audiosample <khz>` | Output sample rate in kHz for `--audiofile` (e.g. `44.1`/`48`/`96`/`192`). Always emits `-ar` (forces a re-encode), even when it equals the source rate. Default keeps the source rate. |
 | `-ap, --audiotempo <x>` | Pitch-preserving speed change for `--audiofile` (0.5-100.0, same as ffmpeg `atempo`; e.g. `0.75` slower, `1.5` faster, `3/2` fraction accepted; `1.0` = unchanged). Runs as the last audio filter; forces a re-encode. |
 | `-h, --help` | Show help. |
 
