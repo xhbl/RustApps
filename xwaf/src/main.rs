@@ -1079,6 +1079,14 @@ fn print_usage() {
     eprintln!("  -rc, --recode <kbps>     Re-encode 2-pass; requires --outfile.");
     eprintln!("  -ec, --encoder <name>    Encoder for --recode: x265 (default) or x264.");
     eprintln!("  -of, --outfile <path>    Output file for --recode (.mkv/.mp4/.hevc, or no dot = raw).");
+    eprintln!("  -cb, --calculatebitrate <size>");
+    eprintln!("                          Print the video bitrate that fits <size> (e.g. 4.3g, 700m;");
+    eprintln!("                          1g = 1024m) into the source duration, reserving 5 kbps for");
+    eprintln!("                          the container. Standalone: cannot be combined with any");
+    eprintln!("                          other option.");
+    eprintln!("  -mb, --minusbitrate <kbps>");
+    eprintln!("                          Bitrate to subtract when using --calculatebitrate, e.g. the");
+    eprintln!("                          audio track's (optional).");
     eprintln!("  -avs, --avscript <path>  Generate an AviSynth script (DirectShowSource) reproducing the");
     eprintln!("                          -rs/-lb/-pb/-sf + HDR→SDR preprocessing, written silently to the");
     eprintln!("                          file (may be combined with --recode).");
@@ -1114,6 +1122,72 @@ fn print_usage() {
 fn fail(msg: &str) -> ! {
     eprintln!("Error: {}", msg);
     std::process::exit(1);
+}
+
+/// Parse a target size such as `4.3g` or `700m` into bytes. The `g`/`m`
+/// suffixes are binary (1g = 1024m = 1024³ bytes), the convention disc-size
+/// tools use.
+fn parse_size_bytes(s: &str) -> Option<u64> {
+    let lower = s.trim().to_ascii_lowercase();
+    let (digits, scale) = if let Some(d) = lower.strip_suffix('g') {
+        (d, 1024u64 * 1024 * 1024)
+    } else {
+        (lower.strip_suffix('m')?, 1024u64 * 1024)
+    };
+    let value = digits.trim().parse::<f64>().ok()?;
+    if !(value.is_finite() && value > 0.0) {
+        return None;
+    }
+    Some((value * scale as f64) as u64)
+}
+
+/// Reject any option other than the `--calculatebitrate` pair, which is a
+/// standalone calculator rather than a stage in a transcode.
+fn reject_extra_options(args: &[String]) {
+    const ALLOWED: [&str; 4] = ["-cb", "--calculatebitrate", "-mb", "--minusbitrate"];
+    if let Some(other) = args
+        .iter()
+        .skip(1)
+        .find(|a| a.starts_with('-') && !ALLOWED.contains(&a.as_str()))
+    {
+        fail(&format!(
+            "--calculatebitrate is standalone and cannot be combined with '{other}'"
+        ));
+    }
+}
+
+/// Report the video bitrate that fits `bytes` into `duration`, after reserving
+/// `minus` kbps for the other streams (typically audio) and 5 kbps for the
+/// container. Exits after printing the breakdown.
+fn print_target_bitrate(bytes: u64, minus: u32, duration: f64) -> ! {
+    /// Muxing overhead, always reserved.
+    const CONTAINER_KBPS: u32 = 5;
+    let reserved = minus + CONTAINER_KBPS;
+    let total_kbps = bytes as f64 * 8.0 / duration / 1000.0;
+    let video_kbps = (total_kbps - reserved as f64).floor();
+    if video_kbps < 1.0 {
+        fail(&format!(
+            "target size of {bytes} bytes leaves no video bitrate \
+             ({total_kbps:.0} kbps total - {reserved} kbps reserved)"
+        ));
+    }
+    let mib = 1024.0 * 1024.0;
+    let size = if bytes as f64 >= 1024.0 * mib {
+        format!("{:.2} GB", bytes as f64 / (1024.0 * mib))
+    } else {
+        format!("{:.0} MB", bytes as f64 / mib)
+    };
+    let reserved_note = if minus > 0 {
+        format!("{minus} --minusbitrate + {CONTAINER_KBPS} container")
+    } else {
+        format!("{CONTAINER_KBPS} container")
+    };
+    println!("target size  : {size} ({bytes} bytes)");
+    println!("duration     : {}", format_duration(duration));
+    println!("total bitrate: {total_kbps:.0} kbps");
+    println!("reserved     : {reserved} kbps ({reserved_note})");
+    println!("video bitrate: {video_kbps:.0} kbps");
+    std::process::exit(0);
 }
 
 /// Build the auto-detect hardware-decode prefix for *formatting* into the
@@ -1204,9 +1278,14 @@ fn run_ffmpeg_pipe(input_path: &str, vf: Option<&str>, fps: Option<FrameRate>) -
     cmd.stderr(std::process::Stdio::inherit());
     cmd.stdout(std::process::Stdio::inherit());
 
-    let status = match cmd.status() {
-        Ok(s) => s,
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
         Err(e) => fail(&format!("failed to launch ffmpeg: {}", e)),
+    };
+    unthrottle_child(&child);
+    let status = match child.wait() {
+        Ok(s) => s,
+        Err(e) => fail(&format!("failed to wait for ffmpeg: {}", e)),
     };
     std::process::exit(status.code().unwrap_or(1));
 }
@@ -1570,6 +1649,7 @@ fn run_audio_extract(req: AudioRequest) -> ! {
         Ok(c) => c,
         Err(e) => fail(&format!("failed to launch ffmpeg: {e}")),
     };
+    unthrottle_child(&child);
     // The progress denominator is the expected output duration, which atempo
     // shrinks/extends by the tempo factor.
     let progress_dur = sel.duration.map(|d| d / tempo);
@@ -1829,6 +1909,7 @@ fn run_recode(req: RecodeRequest) -> ! {
             Ok(c) => c,
             Err(e) => fail(&format!("failed to launch ffmpeg (preprocess, pass {pass}): {e}")),
         };
+        unthrottle_child(&preproc);
         let Some(pre_stdout) = preproc.stdout.take() else {
             let _ = preproc.kill();
             fail("failed to capture ffmpeg preprocess output");
@@ -1849,6 +1930,7 @@ fn run_recode(req: RecodeRequest) -> ! {
                 fail(&format!("failed to launch ffmpeg (encode, pass {pass}): {e}"));
             }
         };
+        unthrottle_child(&enc);
 
         if let Some(Err(e)) = enc
             .stderr
@@ -2304,9 +2386,113 @@ fn keep_system_awake() -> Option<()> {
     None
 }
 
+/// Per-process opt-out from Windows' EcoQoS power throttling, the mechanism
+/// behind the "Efficiency Mode" leaf in Task Manager. Windows 11 routes a
+/// process it considers a background task onto a low-clock / efficiency-core
+/// path, so a transcode can run with the CPU held far below its rated speed.
+/// Clearing the execution-speed throttle is a per-process, unprivileged
+/// operation: it reads and writes no system-wide power setting, and only
+/// affects the process it is applied to.
+#[cfg(windows)]
+mod ecoqos {
+    use std::ffi::c_void;
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetCurrentProcess() -> *mut c_void;
+        fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut c_void;
+        fn CloseHandle(handle: *mut c_void) -> i32;
+        fn SetProcessInformation(
+            process: *mut c_void,
+            class: i32,
+            info: *mut c_void,
+            size: u32,
+        ) -> i32;
+    }
+
+    /// `PROCESS_SET_INFORMATION` — the access right `SetProcessInformation` needs.
+    const PROCESS_SET_INFORMATION: u32 = 0x0200;
+    /// `PROCESS_INFORMATION_CLASS::ProcessPowerThrottling`
+    const PROCESS_POWER_THROTTLING: i32 = 4;
+    /// `PROCESS_POWER_THROTTLING_CURRENT_VERSION`
+    const THROTTLING_STATE_VERSION: u32 = 1;
+    /// `PROCESS_POWER_THROTTLING_EXECUTION_SPEED`
+    const EXECUTION_SPEED: u32 = 0x1;
+
+    /// `PROCESS_POWER_THROTTLING_STATE`; `control_mask` selects the execution
+    /// speed knob and a clear `state_mask` means "not throttled".
+    #[repr(C)]
+    struct ThrottlingState {
+        version: u32,
+        control_mask: u32,
+        state_mask: u32,
+    }
+
+    fn apply(handle: *mut c_void) -> bool {
+        let mut state = ThrottlingState {
+            version: THROTTLING_STATE_VERSION,
+            control_mask: EXECUTION_SPEED,
+            state_mask: 0,
+        };
+        // SAFETY: `handle` is a live process handle opened with
+        // PROCESS_SET_INFORMATION, and `state` is exactly the structure
+        // ProcessPowerThrottling expects.
+        unsafe {
+            SetProcessInformation(
+                handle,
+                PROCESS_POWER_THROTTLING,
+                std::ptr::addr_of_mut!(state).cast(),
+                std::mem::size_of::<ThrottlingState>() as u32,
+            ) != 0
+        }
+    }
+
+    /// Opt the calling process out. Returns false if the OS rejects it.
+    pub fn clear_self() -> bool {
+        // SAFETY: GetCurrentProcess returns a valid pseudo-handle.
+        apply(unsafe { GetCurrentProcess() })
+    }
+
+    /// Opt another process (a child we spawned) out. Returns false if the
+    /// handle cannot be opened or the OS rejects the request.
+    pub fn clear_pid(pid: u32) -> bool {
+        // SAFETY: plain Win32 call; the handle is closed on every path below.
+        let handle = unsafe { OpenProcess(PROCESS_SET_INFORMATION, 0, pid) };
+        if handle.is_null() {
+            return false;
+        }
+        let cleared = apply(handle);
+        // SAFETY: `handle` came from OpenProcess and is not used afterwards.
+        unsafe { CloseHandle(handle) };
+        cleared
+    }
+}
+
+/// Opt xwaf itself out of EcoQoS throttling before it does any work.
+#[cfg(windows)]
+fn unthrottle_self() {
+    ecoqos::clear_self();
+}
+
+/// EcoQoS is a Windows-only concept, so this is a no-op.
+#[cfg(not(windows))]
+fn unthrottle_self() {}
+
+/// Opt a freshly spawned child out of EcoQoS throttling: the child (ffmpeg or
+/// the encoder behind `--outpipe`) is what actually needs sustained CPU speed.
+#[cfg(windows)]
+fn unthrottle_child(child: &std::process::Child) {
+    ecoqos::clear_pid(child.id());
+}
+
+/// EcoQoS is a Windows-only concept, so this is a no-op.
+#[cfg(not(windows))]
+fn unthrottle_child(_child: &std::process::Child) {}
+
 fn main() {
     // Hold for the whole run; dropped (and the request released) on exit.
     let _awake = keep_system_awake();
+    unthrottle_self();
     let args: Vec<String> = env::args().collect();
 
     let mut rescale: Option<RescaleTarget> = None;
@@ -2317,6 +2503,8 @@ fn main() {
     let mut outpipe = false;
     let mut recode: Option<u32> = None;
     let mut outfile: Option<String> = None;
+    let mut calc_size: Option<u64> = None;
+    let mut minus_bitrate: Option<u32> = None;
     let mut avscript: Option<String> = None;
     let mut encoder = Encoder::X265;
     let mut audiofile: Option<String> = None;
@@ -2390,6 +2578,37 @@ fn main() {
                     "an output filename (e.g. output.mkv)",
                 );
                 outfile = Some(val);
+            }
+            "-cb" | "--calculatebitrate" => {
+                let val = require_arg(
+                    &args,
+                    &mut i,
+                    "--calculatebitrate",
+                    "a target size (e.g. 4.3g or 700m)",
+                );
+                match parse_size_bytes(&val) {
+                    Some(bytes) => calc_size = Some(bytes),
+                    None => fail(&format!(
+                        "invalid --calculatebitrate '{}' (expected a size with a g/m suffix, \
+                         e.g. 4.3g or 700m)",
+                        val
+                    )),
+                }
+            }
+            "-mb" | "--minusbitrate" => {
+                let val = require_arg(
+                    &args,
+                    &mut i,
+                    "--minusbitrate",
+                    "a bitrate to subtract in kbps (e.g. 448)",
+                );
+                match val.parse::<u32>() {
+                    Ok(n) => minus_bitrate = Some(n),
+                    Err(_) => fail(&format!(
+                        "invalid --minusbitrate '{}' (expected an integer kbps)",
+                        val
+                    )),
+                }
             }
             "-ec" | "--encoder" => {
                 let val = require_arg(&args, &mut i, "--encoder", "a value (x265 or x264)");
@@ -2478,6 +2697,23 @@ fn main() {
     if positional.len() != 1 {
         print_usage();
         std::process::exit(1);
+    }
+
+    // --calculatebitrate is a standalone calculator: it only reports the number
+    // the source duration and target size imply, so it accepts no other option.
+    if let Some(bytes) = calc_size {
+        reject_extra_options(&args);
+        let info = match get_video_info(&positional[0]) {
+            Ok(info) => info,
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        };
+        print_target_bitrate(bytes, minus_bitrate.unwrap_or(0), info.duration);
+    }
+    if minus_bitrate.is_some() {
+        fail("--minusbitrate requires --calculatebitrate");
     }
 
     if recode.is_some() != outfile.is_some() {

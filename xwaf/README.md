@@ -73,6 +73,8 @@ duration, bitrate) followed by every audio track. Pure-audio files (e.g. `.mp3`,
 | `-rc, --recode <kbps>` | 2-pass re-encode; requires `--outfile`. |
 | `-ec, --encoder <name>` | Encoder for `--recode`: `x265` (default) or `x264`. |
 | `-of, --outfile <path>` | Output file for `--recode` (`.mkv`/`.mp4`/`.hevc`, or no dot = raw elementary stream). |
+| `-cb, --calculatebitrate <size>` | Print the video bitrate that fits `<size>` (e.g. `4.3g`, `700m`; `1g` = `1024m`) into the source duration, reserving 5 kbps for the container, then exit. Standalone: cannot be combined with any other option. |
+| `-mb, --minusbitrate <kbps>` | Bitrate to subtract when using `--calculatebitrate` (e.g. the audio track's). Optional. |
 | `-avs, --avscript <path>` | Generate an AviSynth script (`DirectShowSource`, built-in) that reproduces the `-rs`/`-lb`/`-pb`/`-sf` preprocessing and HDR→SDR — exact-rational `AssumeFPS` retime (incl. automatic VFR→CFR), `LanczosResize` scale, `AddBorders` bars, `z_ConvertFormat`+`DGHable` tone mapping for HDR sources (avsresize/DGTonemap), and `ConvertToYV12` (YUV 4:2:0). Written silently to the file; may be combined with `--recode`. |
 | `-af, --audiofile <path>` | Export/re-encode audio: `.ac3`/`.dts`/`.flac`/`.mp3`/`.aac`/`.m4a`/`.wav`/`.ogg`/`.opus`. Channels above 5.1 are downmixed to 5.1; when the source format and channels already match the target and no `--audiobitrate` is given, the stream is copied without re-encoding (specifying `--audiobitrate` forces a re-encode so the bitrate takes effect). |
 | `-at, --audiotrack <n>` | Audio track to export with `--audiofile` (1-based, default 1). |
@@ -91,7 +93,8 @@ exclusive; `--audiofile` cannot be combined with `--outpipe`/`--recode`/
 `--audiosample`/`--audiotempo`/`--audionormalize`/`--audioloudnorm` require `--audiofile`;
 `--audionormalize` and `--audioloudnorm` are mutually exclusive; `--avscript`
 cannot be combined with `--outpipe`/`--playpreview`/`--audiofile`, but may be
-combined with `--recode` (the script is written silently before the encode).
+combined with `--recode` (the script is written silently before the encode);
+`--calculatebitrate` is standalone — only `--minusbitrate` may accompany it.
 
 ### Examples
 
@@ -124,6 +127,13 @@ xwaf -rc 3000 -of out.mkv video.mkv
 
 ```sh
 xwaf -ec x264 -sf 29.97 -rc 1500 -of out.mp4 video.mkv
+```
+
+Work out the video bitrate that fits a 4.3 GB target, allowing 448 kbps for the
+audio track (feed the printed value to `-rc`):
+
+```sh
+xwaf -cb 4.3g -mb 448 video.mkv
 ```
 
 Export the first audio track as 5.1 AC-3 (7.1 sources are downmixed; default
@@ -179,6 +189,14 @@ xwaf -avs out.avs -rs 720p -lb -sf 24 video.mkv
   on Linux the D-Bus/systemd inhibitor. The request is released when the process
   exits. Some platforms restrict this (e.g. Windows Modern Standby, or battery
   power); a warning is printed if it cannot be granted.
+- On Windows 11, `xwaf` also opts itself and every process it spawns (ffmpeg,
+  and the encoder behind `-op`) out of EcoQoS power throttling — the
+  "Efficiency Mode" that would otherwise schedule the encode onto a low-clock
+  path and hold the CPU well below its rated speed. This uses
+  `SetProcessInformation(ProcessPowerThrottling, …)` and is purely per-process:
+  no privileges are required and no system-wide power setting is touched. It
+  cannot override the Windows *power mode* slider, the active power plan, or
+  firmware/thermal power limits.
 
 ## License
 
