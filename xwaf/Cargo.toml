@@ -1,6 +1,6 @@
 ﻿[package]
 name = "xwaf"
-version = "1.0.31"
+version = "1.0.32"
 edition = "2024"
 authors = ["XHBL <newxhbl@hotmail.com>"]
 description = "A tool to eXecute Audio/Video transcoding With FFmpeg"
@@ -9,6 +9,13 @@ license = "MIT"
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# keepawake only implements Windows/macOS/Linux backends (it fails to compile
+# elsewhere), so it is pulled in only on those platforms; other targets fall
+# back to a no-op in `keep_system_awake`.
+[target.'cfg(any(windows, target_os = "linux", target_os = "macos"))'.dependencies]
+keepawake = "0.6.1"
+
 
 
 

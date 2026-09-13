@@ -173,6 +173,12 @@ xwaf -avs out.avs -rs 720p -lb -sf 24 video.mkv
   piping into x265.
 - External tools (`ffmpeg`, `ffprobe`, `ffplay`, `mpv`) are resolved by first
   checking the directory of the `xwaf` executable, then the system `PATH`.
+- While running, `xwaf` asks the OS not to sleep (idle and explicit sleep) so a
+  long encode is not interrupted; the display may still turn off. On Windows
+  this uses `SetThreadExecutionState`, on macOS `IOPMAssertionCreateWithName`,
+  on Linux the D-Bus/systemd inhibitor. The request is released when the process
+  exits. Some platforms restrict this (e.g. Windows Modern Standby, or battery
+  power); a warning is printed if it cannot be granted.
 
 ## License
 

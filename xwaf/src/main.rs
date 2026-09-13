@@ -2267,7 +2267,46 @@ fn require_arg(args: &[String], i: &mut usize, opt: &str, hint: &str) -> String 
         .unwrap_or_else(|| fail(&format!("{opt} requires {hint}")))
 }
 
+/// Keep the system from sleeping (explicitly or on idle) while xwaf runs, so a
+/// long transcode is not interrupted; the display may still turn off. The
+/// returned guard holds the request until it is dropped (process exit), which
+/// also releases it via the OS on `std::process::exit`. Returns None when the
+/// platform refuses the request (e.g. Windows Modern Standby).
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+fn keep_system_awake() -> Option<keepawake::KeepAwake> {
+    let create = |idle: bool, sleep: bool| {
+        keepawake::Builder::default()
+            .idle(idle)
+            .sleep(sleep)
+            .reason("xwaf is transcoding")
+            .app_name(env!("CARGO_PKG_NAME"))
+            .app_reverse_domain("io.github.xhbl.xwaf")
+            .create()
+    };
+    match create(true, true) {
+        Ok(awake) => Some(awake),
+        // Some platforms (Windows Modern Standby) reject the explicit-sleep
+        // part; keep the idle part, which still covers the common case.
+        Err(_) => match create(true, false) {
+            Ok(awake) => Some(awake),
+            Err(e) => {
+                eprintln!("Warning: cannot prevent the system from sleeping: {e}");
+                None
+            }
+        },
+    }
+}
+
+/// No sleep-inhibition backend is available on this platform (keepawake only
+/// supports Windows/macOS/Linux), so this is a no-op.
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+fn keep_system_awake() -> Option<()> {
+    None
+}
+
 fn main() {
+    // Hold for the whole run; dropped (and the request released) on exit.
+    let _awake = keep_system_awake();
     let args: Vec<String> = env::args().collect();
 
     let mut rescale: Option<RescaleTarget> = None;
