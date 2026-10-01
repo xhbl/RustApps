@@ -1076,6 +1076,9 @@ fn print_usage() {
     eprintln!("                          source fps is within ±5% of the target).");
     eprintln!("  -pp, --playpreview       Play the stream (prefers mpv, falls back to ffplay).");
     eprintln!("  -op, --outpipe           Pipe decoded/preprocessed yuv4mpeg stream to stdout.");
+    eprintln!("  -lp, --lowpriority       Run the encoding processes at the lowest CPU priority (idle");
+    eprintln!("                          class / nice 19), so they only use otherwise-idle CPU and");
+    eprintln!("                          leave the machine responsive. Does not affect --playpreview.");
     eprintln!("  -rc, --recode <kbps>     Re-encode 2-pass; requires --outfile.");
     eprintln!("  -ec, --encoder <name>    Encoder for --recode: x265 (default) or x264.");
     eprintln!("  -of, --outfile <path>    Output file for --recode (.mkv/.mp4/.hevc, or no dot = raw).");
@@ -1249,7 +1252,7 @@ fn shell_escape(s: &str) -> String {
 /// Stdin/stderr are inherited so ffmpeg progress/errors and `q`/signals still
 /// work; stdout is forwarded untouched to the caller for downstream encoding.
 /// The function does not return — it exits with ffmpeg's own exit code.
-fn run_ffmpeg_pipe(input_path: &str, vf: Option<&str>, fps: Option<FrameRate>) -> ! {
+fn run_ffmpeg_pipe(input_path: &str, vf: Option<&str>, fps: Option<FrameRate>, low_priority: bool) -> ! {
     let mut cmd = Command::new(resolve_binary("ffmpeg"));
     cmd.args(["-hide_banner", "-loglevel", "error"]);
     if vf.map(|f| f.contains("libplacebo")).unwrap_or(false) {
@@ -1282,7 +1285,7 @@ fn run_ffmpeg_pipe(input_path: &str, vf: Option<&str>, fps: Option<FrameRate>) -
         Ok(c) => c,
         Err(e) => fail(&format!("failed to launch ffmpeg: {}", e)),
     };
-    unthrottle_child(&child);
+    tune_child(&child, low_priority);
     let status = match child.wait() {
         Ok(s) => s,
         Err(e) => fail(&format!("failed to wait for ffmpeg: {}", e)),
@@ -1503,6 +1506,7 @@ struct AudioRequest<'a> {
     tempo: f64,
     normalize: bool,
     loudnorm: bool,
+    low_priority: bool,
     tracks: &'a [AudioInfo],
 }
 
@@ -1516,7 +1520,7 @@ struct AudioRequest<'a> {
 /// `atempo` filter (pitch-preserving speed change, 1.0 = unchanged). Exits
 /// with ffmpeg's status.
 fn run_audio_extract(req: AudioRequest) -> ! {
-    let AudioRequest { input, outfile, track, channel, bitrate, sample, tempo, normalize, loudnorm, tracks } = req;
+    let AudioRequest { input, outfile, track, channel, bitrate, sample, tempo, normalize, loudnorm, low_priority, tracks } = req;
     let sel = match tracks.get(track as usize - 1) {
         Some(t) => t,
         None => fail(&format!(
@@ -1649,7 +1653,7 @@ fn run_audio_extract(req: AudioRequest) -> ! {
         Ok(c) => c,
         Err(e) => fail(&format!("failed to launch ffmpeg: {e}")),
     };
-    unthrottle_child(&child);
+    tune_child(&child, low_priority);
     // The progress denominator is the expected output duration, which atempo
     // shrinks/extends by the tempo factor.
     let progress_dur = sel.duration.map(|d| d / tempo);
@@ -1861,6 +1865,7 @@ struct RecodeRequest<'a> {
     level: &'a str,
     fps: Option<FrameRate>,
     total_frames: u64,
+    low_priority: bool,
 }
 
 /// Run the selected 2-pass encode: first pass writes only the stats file (to
@@ -1883,7 +1888,7 @@ struct RecodeRequest<'a> {
 fn run_recode(req: RecodeRequest) -> ! {
     use std::process::{Command, Stdio};
 
-    let RecodeRequest { input: input_path, vf, bitrate, outfile, encoder, level, fps, total_frames } = req;
+    let RecodeRequest { input: input_path, vf, bitrate, outfile, encoder, level, fps, total_frames, low_priority } = req;
     let stats = stats_filename(outfile);
     let pre = build_preprocess_tokens(input_path, vf, fps);
     let pass1 = build_recode_tokens(bitrate, &stats, "", 1, encoder, level);
@@ -1909,7 +1914,7 @@ fn run_recode(req: RecodeRequest) -> ! {
             Ok(c) => c,
             Err(e) => fail(&format!("failed to launch ffmpeg (preprocess, pass {pass}): {e}")),
         };
-        unthrottle_child(&preproc);
+        tune_child(&preproc, low_priority);
         let Some(pre_stdout) = preproc.stdout.take() else {
             let _ = preproc.kill();
             fail("failed to capture ffmpeg preprocess output");
@@ -1930,7 +1935,7 @@ fn run_recode(req: RecodeRequest) -> ! {
                 fail(&format!("failed to launch ffmpeg (encode, pass {pass}): {e}"));
             }
         };
-        unthrottle_child(&enc);
+        tune_child(&enc, low_priority);
 
         if let Some(Err(e)) = enc
             .stderr
@@ -2386,15 +2391,18 @@ fn keep_system_awake() -> Option<()> {
     None
 }
 
-/// Per-process opt-out from Windows' EcoQoS power throttling, the mechanism
-/// behind the "Efficiency Mode" leaf in Task Manager. Windows 11 routes a
-/// process it considers a background task onto a low-clock / efficiency-core
-/// path, so a transcode can run with the CPU held far below its rated speed.
-/// Clearing the execution-speed throttle is a per-process, unprivileged
-/// operation: it reads and writes no system-wide power setting, and only
-/// affects the process it is applied to.
+/// Hand-rolled Win32 surface for tuning the processes xwaf runs, so no bindings
+/// crate is needed. Two independent knobs live here:
+///
+/// * EcoQoS ("Efficiency Mode") throttling — Windows 11 routes a process it
+///   considers a background task onto a low-clock / efficiency-core path, so a
+///   transcode can run with the CPU held far below its rated speed. Clearing
+///   the execution-speed throttle is per-process and unprivileged: it reads and
+///   writes no system-wide power setting.
+/// * CPU priority class — dropping a process to idle priority keeps it from
+///   competing with whatever the user is doing in the foreground.
 #[cfg(windows)]
-mod ecoqos {
+mod win32 {
     use std::ffi::c_void;
 
     #[link(name = "kernel32")]
@@ -2408,9 +2416,10 @@ mod ecoqos {
             info: *mut c_void,
             size: u32,
         ) -> i32;
+        fn SetPriorityClass(process: *mut c_void, class: u32) -> i32;
     }
 
-    /// `PROCESS_SET_INFORMATION` — the access right `SetProcessInformation` needs.
+    /// `PROCESS_SET_INFORMATION` — the access right both setters need.
     const PROCESS_SET_INFORMATION: u32 = 0x0200;
     /// `PROCESS_INFORMATION_CLASS::ProcessPowerThrottling`
     const PROCESS_POWER_THROTTLING: i32 = 4;
@@ -2418,6 +2427,8 @@ mod ecoqos {
     const THROTTLING_STATE_VERSION: u32 = 1;
     /// `PROCESS_POWER_THROTTLING_EXECUTION_SPEED`
     const EXECUTION_SPEED: u32 = 0x1;
+    /// `IDLE_PRIORITY_CLASS` — the lowest priority class.
+    const IDLE_PRIORITY_CLASS: u32 = 0x0000_0040;
 
     /// `PROCESS_POWER_THROTTLING_STATE`; `control_mask` selects the execution
     /// speed knob and a clear `state_mask` means "not throttled".
@@ -2428,15 +2439,29 @@ mod ecoqos {
         state_mask: u32,
     }
 
-    fn apply(handle: *mut c_void) -> bool {
+    /// Open a child process for tuning, hand it to `f`, and close it again.
+    /// Returns false when the handle cannot be opened.
+    fn with_process<T>(pid: u32, f: impl FnOnce(*mut c_void) -> T) -> Option<T> {
+        // SAFETY: plain Win32 call; the handle is closed on every path below.
+        let handle = unsafe { OpenProcess(PROCESS_SET_INFORMATION, 0, pid) };
+        if handle.is_null() {
+            return None;
+        }
+        let result = f(handle);
+        // SAFETY: `handle` came from OpenProcess and is not used afterwards.
+        unsafe { CloseHandle(handle) };
+        Some(result)
+    }
+
+    fn clear_throttling(handle: *mut c_void) -> bool {
         let mut state = ThrottlingState {
             version: THROTTLING_STATE_VERSION,
             control_mask: EXECUTION_SPEED,
             state_mask: 0,
         };
-        // SAFETY: `handle` is a live process handle opened with
-        // PROCESS_SET_INFORMATION, and `state` is exactly the structure
-        // ProcessPowerThrottling expects.
+        // SAFETY: `handle` is a live process handle with PROCESS_SET_INFORMATION
+        // access, and `state` is exactly the structure ProcessPowerThrottling
+        // expects.
         unsafe {
             SetProcessInformation(
                 handle,
@@ -2447,47 +2472,74 @@ mod ecoqos {
         }
     }
 
-    /// Opt the calling process out. Returns false if the OS rejects it.
+    /// Opt the calling process out of EcoQoS. Returns false if the OS rejects it.
     pub fn clear_self() -> bool {
         // SAFETY: GetCurrentProcess returns a valid pseudo-handle.
-        apply(unsafe { GetCurrentProcess() })
+        clear_throttling(unsafe { GetCurrentProcess() })
     }
 
-    /// Opt another process (a child we spawned) out. Returns false if the
-    /// handle cannot be opened or the OS rejects the request.
+    /// Opt another process (a child we spawned) out of EcoQoS. Returns false if
+    /// the handle cannot be opened or the OS rejects the request.
     pub fn clear_pid(pid: u32) -> bool {
-        // SAFETY: plain Win32 call; the handle is closed on every path below.
-        let handle = unsafe { OpenProcess(PROCESS_SET_INFORMATION, 0, pid) };
-        if handle.is_null() {
-            return false;
-        }
-        let cleared = apply(handle);
-        // SAFETY: `handle` came from OpenProcess and is not used afterwards.
-        unsafe { CloseHandle(handle) };
-        cleared
+        with_process(pid, clear_throttling).unwrap_or(false)
+    }
+
+    /// Drop another process to idle priority. Returns false if the handle
+    /// cannot be opened or the OS rejects the request.
+    pub fn set_idle_priority(pid: u32) -> bool {
+        with_process(pid, |handle| {
+            // SAFETY: `handle` is live and has PROCESS_SET_INFORMATION access.
+            unsafe { SetPriorityClass(handle, IDLE_PRIORITY_CLASS) != 0 }
+        })
+        .unwrap_or(false)
     }
 }
 
 /// Opt xwaf itself out of EcoQoS throttling before it does any work.
 #[cfg(windows)]
 fn unthrottle_self() {
-    ecoqos::clear_self();
+    win32::clear_self();
 }
 
 /// EcoQoS is a Windows-only concept, so this is a no-op.
 #[cfg(not(windows))]
 fn unthrottle_self() {}
 
-/// Opt a freshly spawned child out of EcoQoS throttling: the child (ffmpeg or
-/// the encoder behind `--outpipe`) is what actually needs sustained CPU speed.
+/// Apply the per-process policies to a freshly spawned child. EcoQoS throttling
+/// is always cleared (the child does the actual encoding work and needs
+/// sustained CPU speed); `--lowpriority` additionally drops it to idle priority
+/// so it only uses CPU the user is not otherwise using.
 #[cfg(windows)]
-fn unthrottle_child(child: &std::process::Child) {
-    ecoqos::clear_pid(child.id());
+fn tune_child(child: &std::process::Child, low_priority: bool) {
+    win32::clear_pid(child.id());
+    if low_priority {
+        win32::set_idle_priority(child.id());
+    }
 }
 
-/// EcoQoS is a Windows-only concept, so this is a no-op.
-#[cfg(not(windows))]
-fn unthrottle_child(_child: &std::process::Child) {}
+/// Unix has no EcoQoS; `--lowpriority` maps to the highest nice value, which a
+/// process may always apply to its own children without privileges.
+#[cfg(unix)]
+fn tune_child(child: &std::process::Child, low_priority: bool) {
+    if low_priority {
+        // SAFETY: plain libc call on a process we spawned; the return value is
+        // not actionable (19 is always permitted for our own child).
+        unsafe { setpriority(PRIO_PROCESS, child.id(), 19) };
+    }
+}
+
+#[cfg(unix)]
+unsafe extern "C" {
+    fn setpriority(which: i32, who: u32, prio: i32) -> i32;
+}
+
+/// `PRIO_PROCESS` is 0 on Linux/macOS/BSD.
+#[cfg(unix)]
+const PRIO_PROCESS: i32 = 0;
+
+/// Neither knob exists on this platform, so this is a no-op.
+#[cfg(not(any(windows, unix)))]
+fn tune_child(_child: &std::process::Child, _low_priority: bool) {}
 
 fn main() {
     // Hold for the whole run; dropped (and the request released) on exit.
@@ -2501,6 +2553,7 @@ fn main() {
     let mut setfps: Option<FrameRate> = None;
     let mut play = false;
     let mut outpipe = false;
+    let mut low_priority = false;
     let mut recode: Option<u32> = None;
     let mut outfile: Option<String> = None;
     let mut calc_size: Option<u64> = None;
@@ -2555,6 +2608,7 @@ fn main() {
             }
             "-pp" | "--playpreview" => play = true,
             "-op" | "--outpipe" => outpipe = true,
+            "-lp" | "--lowpriority" => low_priority = true,
             "-avs" | "--avscript" => {
                 let val = require_arg(&args, &mut i, "--avscript", "an output file (e.g. out.avs)");
                 avscript = Some(val);
@@ -2766,6 +2820,7 @@ fn main() {
             tempo: audio_tempo,
             normalize: audio_normalize,
             loudnorm: audio_loudnorm,
+            low_priority,
             tracks: &tracks,
         });
     }
@@ -2847,7 +2902,7 @@ fn main() {
             // When no preprocessing is required we still emit a valid yuv4mpeg
             // stream for downstream consumers, with colour tags pinned and no
             // -vf filter attached.
-            run_ffmpeg_pipe(&positional[0], vf.as_deref(), retime);
+            run_ffmpeg_pipe(&positional[0], vf.as_deref(), retime, low_priority);
         }
 
         if let (Some(bitrate), Some(out)) = (recode, outfile.as_deref()) {
@@ -2891,6 +2946,7 @@ fn main() {
                 level,
                 fps: retime,
                 total_frames: info.estimated_total_frames(),
+                low_priority,
             });
         }
 

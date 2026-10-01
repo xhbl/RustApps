@@ -70,6 +70,7 @@ duration, bitrate) followed by every audio track. Pure-audio files (e.g. `.mp3`,
 | `-sf, --setfps <fps>` | Retime (no frame drop/dup, duration changes) to a standard rate: `23.976`/`24`/`25`/`29.97`/`30`/`59.97`/`60`. Applied only when the source fps is within ±5% of the target, otherwise ignored with a warning. |
 | `-pp, --playpreview` | Play the (preprocessed) stream — prefers mpv (`--vo=gpu-next --tone-mapping=bt.2390`), falls back to ffplay. |
 | `-op, --outpipe` | Execute the preprocessing and write the YUV4MPEG2 stream to stdout for direct piping into an encoder. |
+| `-lp, --lowpriority` | Run the encoding processes at the lowest CPU priority (Windows idle class / Unix `nice 19`), so a background transcode only uses CPU the user is not otherwise using. Applies to the `--recode`/`--outpipe`/`--audiofile` processes; `--playpreview` is left alone. |
 | `-rc, --recode <kbps>` | 2-pass re-encode; requires `--outfile`. |
 | `-ec, --encoder <name>` | Encoder for `--recode`: `x265` (default) or `x264`. |
 | `-of, --outfile <path>` | Output file for `--recode` (`.mkv`/`.mp4`/`.hevc`, or no dot = raw elementary stream). |
